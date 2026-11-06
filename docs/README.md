@@ -1,0 +1,66 @@
+# Documentation Index / 文档索引
+
+This directory contains the platform's **standard design and architecture documents**, plus real UI screenshots. All figures (table counts, permission codes, endpoint paths, BM25 parameters, tool names) are derived from the code and verified by the smoke suite.
+
+本目录存放平台的**标准化设计与架构文档**及真实界面截图。文中所有数字（表数量、权限码、端点路径、BM25 参数、工具名）均取自代码并经冒烟测试验证。
+
+## Document map
+
+| ID | Document | Language | Content |
+| --- | --- | --- | --- |
+| `ARC-001` | [architecture.md](architecture.md) · [中文](architecture.zh-CN.md) | EN / 中文 | C4 context–container–component views, request pipeline, runtime sequences, deployment, quality attributes, traceability |
+| `AI-001` | [ai-design.md](ai-design.md) · [中文](ai-design.zh-CN.md) | EN / 中文 | **AI system design**: LLM runtime, ReAct orchestration, unified tool registry, RAG/BM25, MCP exposure, prompt spec, safety boundary, upgrade path |
+| `SEC-001` | [security.md](security.md) | EN (中文摘要) | Identity/JWT, PBKDF2, TOTP, WebAuthn, MFA policy, 25 RBAC permissions, SSO, audit, threat model, production checklist |
+| `DAT-001` | [data-model.md](data-model.md) | EN (中文摘要) | 17 tables, 4 indexes, JSON columns, ER diagram, data-access helpers, seed data, migration notes |
+| `API-001` | [api-reference.md](api-reference.md) | EN (中文摘要) | REST conventions, all **67 OpenAPI paths**, MCP methods, 12 tool schemas, examples |
+| `ADR-*` | [adr/README.md](adr/README.md) | EN | 6 accepted architecture decision records + ADR template and conventions |
+| — | [README.md](../README.md) · [中文](../README.zh-CN.md) | EN / 中文 | Project overview, quick start, demo accounts, screenshots |
+| — | [backend/README.md](../backend/README.md) · [中文](../backend/README.zh-CN.md) | EN / 中文 | Backend runbook, endpoints, security, configuration |
+| — | [frontend/README.md](../frontend/README.md) · [中文](../frontend/README.zh-CN.md) | EN / 中文 | Frontend pages, layout, design system, i18n/theme, data flow |
+
+## Suggested reading paths
+
+| Role | Order |
+| --- | --- |
+| Reviewer / architect | `ARC-001` → `ADR-*` → `AI-001` → `SEC-001` |
+| AI engineer | `AI-001` → `ADR-0002/0003/0004/0005` → `API-001` → `services/llm.py`, `mcp_tools.py`, `rag.py` |
+| Backend engineer | `ARC-001 §6` → `DAT-001` → `API-001` → `SEC-001` → `routers/` |
+| Frontend engineer | `ARC-001 §6.2/§10` → `frontend/README.md` → `API-001 §1` (bootstrap contract) |
+| SRE / operator | `ARC-001 §9/§12/§13` → `SEC-001 §8` → `README.md` Quick start |
+
+## Conventions / 约定
+
+1. **Primary design documents are bilingual** (`architecture`, `ai-design`); supporting reference documents are English with a Chinese summary at the top.
+2. Every design document carries a **document-control table** (ID, status, version, applicable release, related docs).
+3. Diagrams use **Mermaid** so GitHub renders them inline.
+4. Decisions are recorded as **ADRs**; an accepted ADR is never edited in place — it is superseded.
+5. Documents describe the **as-built** system. When behaviour changes, update the doc and the related ADR in the same commit.
+6. Machine-readable contracts win: `/openapi.json` is authoritative for endpoints, `backend/app/db.py::SCHEMA` for tables, `TOOL_SPECS` for tools.
+
+## Verification / 一致性校验
+
+```bash
+cd backend
+uvx ruff check app                 # code style
+python3.11 tests/smoke.py          # 47 end-to-end assertions
+python3.11 -c "from app.main import app; print(len(app.openapi()['paths']))"   # 67
+
+cd ../frontend
+pnpm typecheck && pnpm build
+pnpm check:i18n                    # en/zh key parity
+```
+
+## Screenshots / 界面截图
+
+`docs/screenshots/` contains 9 real Chromium headless captures (1920×1080), referenced by both root READMEs:
+
+| File | View |
+| --- | --- |
+| `login.png` | Login, demo accounts, SSO, MFA |
+| `dashboard.png` / `dashboard-dark.png` | Light and dark theme |
+| `form-designer.png` | Visual form designer |
+| `workflow-studio.png` | DAG workflow canvas |
+| `knowledge-rag.png` | Knowledge base + retrieval test |
+| `ai-agents.png` | Agent chat with tool steps |
+| `mcp-skills.png` | MCP tools and third-party skills |
+| `rbac.png` | Users, roles, permission matrix |

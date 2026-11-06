@@ -1,0 +1,223 @@
+# REST & MCP API Reference
+
+| Field | Value |
+| --- | --- |
+| Document ID | `API-001` |
+| Status | Baseline (implemented and verified) |
+| Version | 1.0 |
+| Applies to | `ai-lowcode-platform` v0.1.0 |
+| Machine-readable source | `GET /openapi.json`, interactive UI at `GET /docs` |
+| Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Security Architecture](security.md) · [Data Model](data-model.md) |
+
+> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **67 个 OpenAPI 路径 / 84 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 12 个平台工具。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md)。
+
+## 1. Conventions
+
+| Item | Rule |
+| --- | --- |
+| Base path | `/api/v1` (`API_PREFIX`) |
+| Auth | `Authorization: Bearer <access_token>` (HS256, `typ=access`) |
+| Public routes | `/auth/login`, `/auth/providers`, `/auth/sso/*`, `/meta/health`, `/meta/version` |
+| Content type | `application/json`; Pydantic v2 request/response models |
+| Status codes | `200` OK · `201` created · `401` unauthenticated · `403` permission denied · `404` not found · `422` validation error |
+| Error shape | `{"detail": "..."}`; the frontend wraps it in `ApiError` |
+| Auditing | Every mutation emits an `audit_logs` row |
+| Catalogs | `GET /meta/bootstrap` returns field types, node types, permissions, providers, agent runtime, MCP mode, i18n locales and themes in one call |
+
+### Bootstrap contract (`GET /api/v1/meta/bootstrap`)
+
+```json
+{
+  "app": {"name": "AI Low-Code Platform", "version": "0.1.0"},
+  "i18n": {"locales": ["en", "zh"], "default": "en"},
+  "themes": ["system", "light", "dark"],
+  "defaults": {"locale": "en", "theme": "system"},
+  "form": {"field_types": [...]},
+  "workflow": {"node_types": [...]},
+  "rbac": {"permissions": [...], "roles": [...]},
+  "auth": {"providers": [...], "mfa_policy": {...}},
+  "agents": {"runtime": {...}},
+  "mcp": {"mode": "fastmcp", "tools": 12},
+  "user": {...}
+}
+```
+
+## 2. REST endpoints (67 paths)
+
+### 2.1 Authentication & MFA — `/auth`
+
+| Methods | Path | Permission | Purpose |
+| --- | --- | --- | --- |
+| POST | `/auth/login` | public | Password login or MFA challenge/enrollment token |
+| POST | `/auth/logout` | authenticated | Client-side session teardown |
+| GET | `/auth/me` | authenticated | Current user, roles, permissions |
+| POST | `/auth/change-password` | authenticated | Change own password |
+| POST | `/auth/mfa/verify` | `mfa`/`enroll` token | Verify OTP or passkey assertion |
+| GET, PUT | `/auth/mfa-policy` | `auth:config` (write) | Global / role / user MFA enforcement |
+| POST | `/auth/otp/setup`, `/otp/enable`, `/otp/disable` | authenticated | TOTP enrollment |
+| POST | `/auth/passkey/register/options`, `/register/verify` | authenticated | WebAuthn registration |
+| POST | `/auth/passkey/authenticate/options`, `/authenticate/verify` | public | Passkey sign-in |
+| GET, DELETE | `/auth/passkey/credentials[/{credential_id}]` | authenticated | List / remove credentials |
+| GET | `/auth/providers` | public | Sanitized SSO provider list (no raw config) |
+| GET, PUT | `/auth/sso/providers[/{code}]` | `auth:config` (write) | Provider configuration |
+| GET | `/auth/sso/{code}/authorize` | public | Build redirect URL + persist state/nonce |
+| GET, POST | `/auth/sso/{code}/callback` | public | Exchange code/ticket, provision user, issue JWT |
+
+### 2.2 Forms — `/forms`
+
+| Methods | Path | Permission |
+| --- | --- | --- |
+| GET, POST | `/forms` | `form:read` / `form:write` |
+| GET | `/forms/field-types` | `form:read` (15 field types) |
+| GET | `/forms/code/{code}` | `form:read` |
+| GET, PUT, DELETE | `/forms/{form_id}` | `form:read` / `form:write` / `form:delete` |
+| POST | `/forms/{form_id}/publish` | `form:publish` |
+| GET, POST | `/forms/{form_id}/submissions` | `form:read` / `form:submit` |
+
+### 2.3 Workflows — `/workflows`
+
+| Methods | Path | Permission |
+| --- | --- | --- |
+| GET, POST | `/workflows` | `workflow:read` / `workflow:write` |
+| GET | `/workflows/node-types` | `workflow:read` (9 node types) |
+| GET, PUT, DELETE | `/workflows/{workflow_id}` | `workflow:read` / `workflow:write` / `workflow:delete` |
+| POST | `/workflows/{workflow_id}/validate` | `workflow:read` |
+| POST | `/workflows/{workflow_id}/run` | `workflow:run` |
+| GET | `/workflows/{workflow_id}/instances` | `workflow:read` |
+| GET | `/workflows/instances/{instance_id}` | `workflow:read` |
+
+### 2.4 Knowledge base — `/knowledge`
+
+| Methods | Path | Permission |
+| --- | --- | --- |
+| GET, POST | `/knowledge/collections` | `knowledge:read` / `knowledge:write` |
+| PUT, DELETE | `/knowledge/collections/{collection_id}` | `knowledge:write` / `knowledge:delete` |
+| GET, POST | `/knowledge/documents` | `knowledge:read` / `knowledge:write` |
+| GET, PUT, DELETE | `/knowledge/documents/{document_id}` | `knowledge:read` / `knowledge:write` / `knowledge:delete` |
+| POST | `/knowledge/documents/{document_id}/reindex` | `knowledge:write` |
+| POST | `/knowledge/search` | `knowledge:read` |
+| GET | `/knowledge/stats` | `knowledge:read` |
+
+### 2.5 AI agents — `/agents`
+
+| Methods | Path | Permission |
+| --- | --- | --- |
+| GET, POST | `/agents` | `agent:read` / `agent:write` |
+| GET, PUT, DELETE | `/agents/{agent_id}` | `agent:read` / `agent:write` |
+| POST | `/agents/{agent_id}/chat` | `agent:chat` |
+| GET | `/agents/{agent_id}/conversations` | `agent:read` |
+| GET, DELETE | `/agents/conversations/{conversation_id}` | `agent:read` |
+| GET | `/agents/meta/runtime` | `agent:read` |
+
+`POST /agents/{agent_id}/chat` body: `{"message": "...", "conversation_id": 12}` → `{answer, steps, sources, model, provider, orchestration}`.
+
+### 2.6 MCP management — `/mcp`
+
+| Methods | Path | Permission |
+| --- | --- | --- |
+| GET | `/mcp/tools` | `mcp:read` |
+| GET | `/mcp/status` | `mcp:read` |
+| GET, POST | `/mcp/skills` | `mcp:read` / `mcp:write` |
+| PUT, DELETE | `/mcp/skills/{skill_id}` | `mcp:write` |
+| POST | `/mcp/skills/{skill_id}/sync` | `mcp:write` |
+| POST | `/mcp/invoke` | `mcp:invoke` |
+
+`POST /mcp/invoke` body: `{"tool": "list_forms", "arguments": {"status": "published"}}`.
+
+### 2.7 RBAC — `/rbac`
+
+| Methods | Path | Permission |
+| --- | --- | --- |
+| GET | `/rbac/permissions` | `rbac:read` (25 codes) |
+| GET | `/rbac/matrix` | `rbac:read` |
+| POST | `/rbac/check` | authenticated |
+| GET, POST | `/rbac/roles` | `rbac:read` / `rbac:write` |
+| PUT, DELETE | `/rbac/roles/{role_id}` | `rbac:write` |
+| GET, POST | `/rbac/users` | `rbac:read` / `rbac:write` |
+| PUT, DELETE | `/rbac/users/{user_id}` | `rbac:write` |
+| POST | `/rbac/users/{user_id}/reset-password` | `rbac:write` |
+
+### 2.8 Audit, metadata & settings
+
+| Methods | Path | Permission |
+| --- | --- | --- |
+| GET | `/audit/logs`, `/audit/actions` | `audit:read` |
+| GET | `/meta/health`, `/meta/version` | public |
+| GET | `/meta/bootstrap`, `/meta/stats` | authenticated / `dashboard:view` |
+| GET, PUT | `/settings` | `settings:read` / `settings:write` |
+
+## 3. MCP endpoint `/mcp`
+
+Streamable HTTP, primary transport `fastmcp` 4.1.6 (`http_app(path="/mcp")`), built-in JSON-RPC fallback when the SDK is unavailable. Optional `Authorization: Bearer <token>` for RBAC-checked tool calls.
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `initialize` | `protocolVersion`, `capabilities`, `clientInfo` | `protocolVersion`, `capabilities{tools,prompts,resources}`, `serverInfo`, `instructions` |
+| `notifications/initialized` | — | `202` |
+| `ping` | — | `{}` |
+| `tools/list` | — | 12 tools with `inputSchema` |
+| `tools/call` | `name`, `arguments` | `content`, `structuredContent`, `isError` |
+| `resources/list`, `resources/read`, `resources/templates/list` | `uri` | `platform://stats`, `platform://forms/{code}`, `platform://workflows/{code}` |
+| `prompts/list`, `prompts/get` | `name`, `arguments` | `analyze_workflow`, `answer_from_kb` |
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"list_forms","arguments":{"status":"published"}}}'
+```
+
+## 4. Platform tools (12)
+
+All input schemas are strict objects (`additionalProperties: false`).
+
+| Tool | Required args | Optional args | Permission | Writes |
+| --- | --- | --- | --- | --- |
+| `list_forms` | — | `status` | `form:read` | no |
+| `get_form` | `code` | — | `form:read` | no |
+| `submit_form` | `code`, `data` | — | `form:submit` | **yes** |
+| `query_records` | — | `form_code`, `limit` (≤100) | `form:read` | no |
+| `list_workflows` | — | `status` | `workflow:read` | no |
+| `get_workflow` | `code` | — | `workflow:read` | no |
+| `run_workflow` | `code` | `context` | `workflow:run` | **yes** |
+| `get_workflow_instance` | `instance_id` | — | `workflow:read` | no |
+| `list_collections` | — | — | `knowledge:read` | no |
+| `search_knowledge` | `query` | `top_k` (≤10) | `knowledge:read` | no |
+| `list_users` | — | — | `rbac:read` | no |
+| `get_stats` | — | — | `dashboard:view` | no |
+
+`list_tools("openai")` emits the same specs as OpenAI function-calling definitions for the ReAct loop.
+
+## 5. Typical sequences
+
+**Login → catalog → action**
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin123"}' | jq -r .access_token)
+
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/meta/bootstrap
+
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"context":{"days":5}}' \
+  http://localhost:8000/api/v1/workflows/1/run
+```
+
+**Agent chat**
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"message":"List all forms and show platform statistics"}' \
+  http://localhost:8000/api/v1/agents/1/chat
+```
+
+## 6. Versioning and compatibility
+
+- All business endpoints are versioned under `/api/v1`; breaking changes require a new prefix.
+- MCP protocol version is negotiated during `initialize` (no hard-coded client requirement).
+- `/openapi.json` is the authoritative machine-readable contract; regenerate this table when routers change.
+- `scripts/smoke.py` (47 assertions) exercises the critical subset of these endpoints end-to-end.
