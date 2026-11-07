@@ -127,6 +127,66 @@ def main() -> int:
         synced = c.post(f"/api/v1/mcp/skills/{builtin['id']}/sync", headers=h, json={})
         check("MCP skill sync", synced.json()["health"] == "healthy")
 
+        print("\n== MCP call journal ==")
+        calls = c.get("/api/v1/mcp/calls", headers=h).json()
+        check("journal records MCP methods", any(x["source"] == "mcp" for x in calls["calls"]))
+        check("journal records REST invoke", any(x["source"] == "rest" for x in calls["calls"]))
+        check("journal entry shape", "arguments" in calls["calls"][0] and "result" in calls["calls"][0])
+        c.post("/api/v1/mcp/invoke", headers=h, json={"tool": "missing_tool", "arguments": {}})
+        check("failed invocation is journaled", c.get(
+            "/api/v1/mcp/calls?status=error", headers=h).json()["total"] >= 1)
+        st = c.get("/api/v1/mcp/calls/stats", headers=h).json()
+        check("journal statistics", st["total"] >= 4 and "by_tool" in st and "timeline" in st)
+        check("journal detail", c.get(
+            f"/api/v1/mcp/calls/{calls['calls'][0]['id']}", headers=h).status_code == 200)
+        exp = c.get("/api/v1/mcp/calls/export", headers=h)
+        check("journal CSV export", exp.status_code == 200
+              and "text/csv" in exp.headers.get("content-type", ""))
+
+        print("\n== MCP skill lifecycle & files ==")
+        cat = c.get("/api/v1/mcp/skills/catalog", headers=h).json()
+        check("installable skill catalog", cat["total"] >= 5 and "files" in cat["catalog"][0])
+        import app.services.skill_files as sf
+        try:
+            sf.validate_path("../escape")
+            safe = False
+        except ValueError:
+            safe = True
+        check("skill file path traversal rejected", safe)
+        target = "sqlite-query"
+        existing_skill = next((s for s in c.get("/api/v1/mcp/skills", headers=h).json()["skills"]
+                               if s["code"] == target), None)
+        if existing_skill:
+            c.post(f"/api/v1/mcp/skills/{existing_skill['id']}/uninstall", headers=h, json={})
+        installed = c.post("/api/v1/mcp/skills/install", headers=h, json={"code": target})
+        check("install skill from catalog", installed.status_code == 201
+              and installed.json()["status"] == "installed")
+        sid = installed.json().get("id", 0)
+        check("install creates editable files", installed.json()["files_created"] >= 4)
+        fl = c.get(f"/api/v1/mcp/skills/{sid}/files", headers=h).json()
+        check("skill file list + disk path", fl["total"] >= 4 and bool(fl["disk_path"]))
+        mf = c.get(f"/api/v1/mcp/skills/{sid}/files/manifest.json", headers=h)
+        check("read skill file", mf.status_code == 200 and "content" in mf.json())
+        upd = c.put(f"/api/v1/mcp/skills/{sid}/files/notes/smoke.md", headers=h,
+                    json={"content": "# smoke\n"})
+        check("create / update skill file", upd.status_code == 200
+              and upd.json()["path"] == "notes/smoke.md")
+        check("file list reflects new file", c.get(
+            f"/api/v1/mcp/skills/{sid}/files", headers=h).json()["total"] == fl["total"] + 1)
+        check("disable skill", c.post(f"/api/v1/mcp/skills/{sid}/disable", headers=h,
+              json={}).json()["status"] == "disabled")
+        check("enable skill", c.post(f"/api/v1/mcp/skills/{sid}/enable", headers=h,
+              json={}).json()["status"] == "installed")
+        un = c.post(f"/api/v1/mcp/skills/{sid}/uninstall", headers=h, json={}).json()
+        check("uninstall removes installed files", un["status"] == "uninstalled"
+              and c.get(f"/api/v1/mcp/skills/{sid}/files", headers=h).json()["total"] == 0)
+        re = c.post(f"/api/v1/mcp/skills/{sid}/reinstall", headers=h, json={}).json()
+        check("reinstall restores default files", re["status"] == "installed"
+              and re["files_affected"] >= 4)
+        check("delete skill file", c.delete(
+            f"/api/v1/mcp/skills/{sid}/files/README.md", headers=h).status_code == 200)
+        check("delete skill", c.delete(f"/api/v1/mcp/skills/{sid}", headers=h).status_code == 200)
+
         print("\n== RBAC / Auth / Audit ==")
         check("list users", c.get("/api/v1/rbac/users", headers=h).json()["total"] >= 4)
         check("permission matrix", len(c.get("/api/v1/rbac/matrix", headers=h).json()["roles"]) >= 4)
@@ -165,6 +225,7 @@ def main() -> int:
         print("\n== Cleanup ==")
         check("delete smoke workflow", c.delete(f"/api/v1/workflows/{wid}", headers=h).status_code == 200)
         check("delete smoke form", c.delete(f"/api/v1/forms/{fid}", headers=h).status_code == 200)
+        check("clear MCP call journal", c.delete("/api/v1/mcp/calls", headers=h).status_code == 200)
 
     print(f"\nResult: {PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0

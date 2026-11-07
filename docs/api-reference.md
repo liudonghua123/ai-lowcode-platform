@@ -9,7 +9,7 @@
 | Machine-readable source | `GET /openapi.json`, interactive UI at `GET /docs` |
 | Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Security Architecture](security.md) · [Data Model](data-model.md) |
 
-> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **67 个 OpenAPI 路径 / 84 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 12 个平台工具。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md)。
+> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **80 个 OpenAPI 路径 / 107 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 12 个平台工具，并提供技能安装/启用/禁用/卸载、可编辑技能文件与全量调用日记。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 技能与调用日记](mcp-skills.md)。
 
 ## 1. Conventions
 
@@ -42,7 +42,7 @@
 }
 ```
 
-## 2. REST endpoints (67 paths)
+## 2. REST endpoints (80 paths)
 
 ### 2.1 Authentication & MFA — `/auth`
 
@@ -118,11 +118,23 @@
 | GET | `/mcp/tools` | `mcp:read` |
 | GET | `/mcp/status` | `mcp:read` |
 | GET, POST | `/mcp/skills` | `mcp:read` / `mcp:write` |
-| PUT, DELETE | `/mcp/skills/{skill_id}` | `mcp:write` |
+| GET | `/mcp/skills/catalog` | `mcp:read` |
+| POST | `/mcp/skills/install` | `mcp:write` |
+| GET, PUT, DELETE | `/mcp/skills/{skill_id}` | `mcp:read` / `mcp:write` |
+| POST | `/mcp/skills/{skill_id}/enable`, `/disable`, `/uninstall`, `/reinstall` | `mcp:write` |
+| GET | `/mcp/skills/{skill_id}/files` | `mcp:read` |
+| POST | `/mcp/skills/{skill_id}/files/reload` | `mcp:write` |
+| GET, PUT, DELETE | `/mcp/skills/{skill_id}/files/{path}` | `mcp:read` / `mcp:write` |
 | POST | `/mcp/skills/{skill_id}/sync` | `mcp:write` |
+| GET | `/mcp/calls`, `/mcp/calls/stats`, `/mcp/calls/export`, `/mcp/calls/{call_id}` | `mcp:read` |
+| DELETE | `/mcp/calls` | `mcp:write` |
 | POST | `/mcp/invoke` | `mcp:invoke` |
 
 `POST /mcp/invoke` body: `{"tool": "list_forms", "arguments": {"status": "published"}}`.
+`POST /mcp/skills/install` body: `{"code": "weather"}` (or full `InstallIn` fields). `PUT /mcp/skills/{id}/files/config.json` body: `{"content": "..."}`.
+`GET /mcp/calls` accepts `tool`, `source`, `status`, `actor`, `method`, `q`, `limit`, `offset`. `/mcp/calls/export` returns `text/csv`.
+
+See [MCP Skills & Call Journal](mcp-skills.md) for the lifecycle state machine, file conventions and journal sources.
 
 ### 2.7 RBAC — `/rbac`
 
@@ -220,4 +232,4 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/jso
 - All business endpoints are versioned under `/api/v1`; breaking changes require a new prefix.
 - MCP protocol version is negotiated during `initialize` (no hard-coded client requirement).
 - `/openapi.json` is the authoritative machine-readable contract; regenerate this table when routers change.
-- `scripts/smoke.py` (47 assertions) exercises the critical subset of these endpoints end-to-end.
+- `scripts/smoke.py` (69 assertions) exercises the critical subset of these endpoints end-to-end.

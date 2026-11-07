@@ -69,7 +69,7 @@ flowchart LR
         SEC["安全层<br/>JWT · PBKDF2 · TOTP<br/>WebAuthn · RBAC"]
         HOST["SPA 静态托管<br/>frontend/dist 回退"]
     end
-    DB[(SQLite<br/>WAL · 17 张表)]
+    DB[(SQLite<br/>WAL · 19 张表)]
     FS[("dist/ 静态资源")]
 
     SPA -->|JSON + Bearer| API
@@ -86,7 +86,7 @@ flowchart LR
 | 容器 | 职责 | 技术 |
 | --- | --- | --- |
 | SPA | 全部 UI、可视化设计器、i18n、主题 | Vite 6、React 18、TypeScript、Tailwind 3、shadcn/ui 风格组件、lucide-react |
-| REST 层 | 67 个 OpenAPI 路径、Pydantic 模型、错误语义 | FastAPI 0.128+、`APIRouter`、`Depends` |
+| REST 层 | 80 个 OpenAPI 路径、Pydantic 模型、错误语义 | FastAPI 0.128+、`APIRouter`、`Depends` |
 | MCP 服务 | `initialize` / `tools/list` / `tools/call` / resources / prompts | `fastmcp` 4.1.6 `http_app(path="/mcp")` + 内置 JSON-RPC 回退 |
 | 服务层 | 纯业务逻辑，不感知 HTTP | `app/services/` 下 Python 模块 |
 | 安全层 | 身份、令牌、密码/MFA、权限校验 | 标准库 `hashlib`/`hmac`、HS256 JWT、`contextvars` |
@@ -260,7 +260,7 @@ SPA catch-all 无条件注册，并在每次请求时解析 `dist/index.html`，
 | --- | --- | --- |
 | 可视化表单设计 | 元数据驱动设计器 | `routers/forms.py`, `pages/Forms.tsx` |
 | 可视化流程编排 | DAG 校验器 + 执行引擎 | `services/workflow_engine.py`, `pages/Workflows.tsx` |
-| REST API | 版本化路由 | `routers/*.py`（84 个路由装饰器 → 67 个 OpenAPI 路径） |
+| REST API | 版本化路由 | `routers/*.py`（107 个路由装饰器 → 80 个 OpenAPI 路径） |
 | MCP + 第三方 skills | 双传输 MCP + 注册表 | `mcp_server.py`, `routers/mcp.py` |
 | AI 查询/操作智能体 | ReAct + 工具注册表 + RAG | `services/llm.py`, `services/rag.py` |
 | 知识库 | BM25 + 分块 | `services/rag.py`, `routers/knowledge.py` |

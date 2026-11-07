@@ -9,7 +9,7 @@
 | Source of truth | `backend/app/db.py::SCHEMA` |
 | Related | [System Architecture](architecture.md) · [Security Architecture](security.md) · [API & MCP Reference](api-reference.md) · [ADR-0004](adr/0004-sqlite-and-local-bm25.md) |
 
-> 中文摘要：平台使用单文件 SQLite（WAL 模式），共 **17 张表、4 个索引**，复杂结构统一以 JSON 文本列存储并由 `insert/update/loads` 透明序列化；连接采用线程局部对象 + 可重入写锁。首次启动自动灌入确定性演示数据。详见 [系统架构设计](architecture.zh-CN.md)。
+> 中文摘要：平台使用单文件 SQLite（WAL 模式），共 **19 张表、7 个索引**，复杂结构统一以 JSON 文本列存储并由 `insert/update/loads` 透明序列化；连接采用线程局部对象 + 可重入写锁，`init_db()` 内置幂等的 `ALTER TABLE` 惰性迁移。首次启动自动灌入确定性演示数据。详见 [系统架构设计](architecture.zh-CN.md)。
 
 ## 1. Storage strategy
 
@@ -88,15 +88,17 @@ erDiagram
 | `agents` | `id`, `code` (unique), `name`, `description`, `mode` (`query`/`act`/`hybrid`), `model`, `system_prompt`, `temperature`, `kb_ids` **JSON**, `skill_ids` **JSON**, `workflow_ids` **JSON**, `status`, `created_by`, timestamps | Bindings are JSON arrays |
 | `conversations` | `id`, `agent_id`, `title`, `messages` **JSON**, `user_id`, `created_at` | Last 6 turns replayed into the ReAct prompt |
 
-### 3.6 MCP & system (3)
+### 3.6 MCP & system (5)
 
 | Table | Key columns | Notes |
 | --- | --- | --- |
-| `mcp_skills` | `id`, `code` (unique), `name`, `type` (`http`/`sse`/`stdio`), `endpoint`, `command`, `enabled`, `auth_config` **JSON**, `tools` **JSON**, `health`, `last_sync_at`, `created_at` | Third-party MCP server registry |
+| `mcp_skills` | `id`, `code` (unique), `name`, `type`, `endpoint`, `command`, `enabled`, `status` (`installed`/`disabled`/`uninstalled`/`error`), `version`, `source`, `description`, `manifest` **JSON**, `auth_config` **JSON**, `tools` **JSON**, `health`, `last_sync_at`, `installed_at`, timestamps | Skill registry + lifecycle state |
+| `mcp_call_logs` | `id`, `request_id`, `method`, `tool`, `source` (`mcp`/`rest`/`agent`/`internal`), `transport`, `actor`, `arguments` **JSON**, `status`, `error`, `result_preview`, `duration_ms`, `created_at` | Every tool invocation and JSON-RPC method, indexed by time + tool |
+| `mcp_skill_files` | `id`, `skill_id`, `path` (unique per skill), `content`, `language`, `size`, `updated_at` | Editable skill files; mirrored to `data/skills/<code>/` |
 | `audit_logs` | `id`, `actor`, `action`, `resource`, `detail` **JSON**, `ip`, `level`, `created_at` | Indexed by `created_at DESC` |
 | `settings` | `key` (PK), `value` **JSON**, `updated_at` | Runtime overrides (MFA policy, i18n/theme defaults) |
 
-## 4. Indexes (4)
+## 4. Indexes (7)
 
 | Index | Column | Purpose |
 | --- | --- | --- |
@@ -104,6 +106,9 @@ erDiagram
 | `idx_instances_wf` | `workflow_instances(workflow_id)` | Instance listing per workflow |
 | `idx_kbdocs_collection` | `kb_documents(collection_id)` | Collection-scoped retrieval |
 | `idx_audit_created` | `audit_logs(created_at DESC)` | Recent-activity queries |
+| `idx_mcp_calls_created` | `mcp_call_logs(created_at DESC)` | Journal pagination / recent calls |
+| `idx_mcp_calls_tool` | `mcp_call_logs(tool)` | Per-tool aggregation and filters |
+| `idx_skill_files_skill` | `mcp_skill_files(skill_id)` | Skill file listing |
 
 ## 5. Data access API
 
@@ -126,7 +131,9 @@ erDiagram
 
 ## 7. Migration notes
 
-- Schema is created idempotently with `CREATE TABLE IF NOT EXISTS`; there is no migration framework.
-- Adding a column requires an explicit `ALTER TABLE` migration step (not shipped in v0.1.0).
+- Schema is created idempotently with `CREATE TABLE IF NOT EXISTS`; full table creation is handled by `init_db()`.
+- `init_db()` also calls `_migrate()`, driven by the `MIGRATIONS` dict. It reads `PRAGMA table_info(<table>)` and issues `ALTER TABLE ... ADD COLUMN` for any missing column, so databases created before the skill lifecycle / journal feature upgrade in place.
+- The v0.2.0 migration adds `status`, `version`, `source`, `description`, `manifest`, `installed_at`, `updated_at` to `mcp_skills`, and creates `mcp_call_logs` + `mcp_skill_files` with three new indexes.
+- `skill_files.bootstrap()` runs at startup to materialize default files for installed skills that have none; `mcp_journal.ensure_demo()` seeds illustrative journal rows when the table is empty.
 - For production, replace SQLite with Postgres and map JSON columns to `JSONB`; the data access helpers are the single integration seam.
 - `backend/data/*.db*` is git-ignored; only `.gitkeep` is committed.

@@ -31,7 +31,7 @@ Frontend: **Vite + React + TypeScript + shadcn/ui design system** · Backend: **
 | **Visual form designer** | 15 field types, click-to-add palette, drag-to-reorder, per-field property editor (label/key/required/placeholder/options/width/validation), live preview with real validation, draft/publish/archive, submission records |
 | **Visual workflow orchestration** | Drag-and-drop DAG canvas with bezier edges, 9 node types (start/end/form/condition/approval/AI/knowledge/HTTP/notification), connect mode, condition branches, node config panel, zoom, auto-layout, graph validation (cycle detection), execution engine, instance logs |
 | **REST API** | ~70 versioned endpoints under `/api/v1`, Pydantic request/response models, auto OpenAPI at `/docs`, consistent error codes, audit logging on every mutation |
-| **MCP** | Real `fastmcp` streamable-HTTP server at `/mcp` (initialize / tools/list / tools/call / resources / prompts), 12 platform tools, plus a dependency-free built-in JSON-RPC fallback; registry for third-party `http`/`sse`/`stdio` MCP servers with tool sync and REST invocation |
+| **MCP** | Real `fastmcp` streamable-HTTP server at `/mcp` (initialize / tools/list / tools/call / resources / prompts), 12 platform tools, plus a dependency-free built-in JSON-RPC fallback; third-party `http`/`sse`/`stdio` skills with an installable catalog, install/enable/disable/uninstall/reinstall, editable skill files and disk mirror, tool sync, REST invocation, and a full **call journal** with stats, charts and CSV export |
 | **AI agents** | `query` / `act` / `hybrid` agents, AgentScope-compatible ReAct tool loop, RAG grounding, conversation persistence, source citations, visible tool-call steps; `mock` / `openai-compatible` / `agentscope` LLM backends (works offline by default) |
 | **Knowledge base** | Collections, documents, automatic chunking, mixed zh/en BM25 retrieval (unigram+bigram), assembled RAG context, retrieval test console |
 | **RBAC** | Users, roles, 25 fine-grained permissions, role×permission matrix, per-endpoint `Depends(require("x:y"))` enforcement, built-in admin/developer/operator/viewer roles |
@@ -55,7 +55,7 @@ ai-lowcode-platform/
 │   │   ├── seed.py             deterministic bootstrap data
 │   │   ├── mcp_server.py       fastmcp tools + builtin JSON-RPC fallback
 │   │   ├── routers/            auth, rbac, forms, workflows, knowledge, agents, mcp, audit, meta
-│   │   └── services/           workflow_engine, rag, llm, mcp_tools, sso
+│   │   └── services/           workflow_engine, rag, llm, mcp_tools, mcp_journal, skill_catalog, skill_files, sso
 │   └── tests/smoke.py          47 end-to-end API assertions
 └── frontend/                   Vite + React + TS SPA
     └── src/
@@ -113,7 +113,7 @@ The database is created and seeded automatically on first boot. CAS ships enable
 2. **Workflows** → open `leave_approval` → drag a node, use **Connect** to add an edge → **Validate** → **Run** with `{"days": 5}` → inspect the condition branch (`true` → director approval).
 3. **Knowledge Base** → run a retrieval test, e.g. `请假制度 leave policy` → see BM25 hits and the assembled context.
 4. **AI Agents** → open *AI Copilot* → ask `List all forms and show platform statistics` → watch real tool calls with results; ask `What is the leave policy?` for a grounded answer with citations.
-5. **MCP Skills** → browse the 12 platform tools → **Invoke** one over REST → **Sync tools** on a registered server.
+5. **MCP Skills** → install a skill from the **catalog** → **View files** and edit `config.json` → disable / reinstall → open the **Call journal** to inspect recorded invocations, filter them and export CSV.
 6. **Authentication** → enable an SSO provider, edit the MFA policy (enforce OTP for a role), then **Settings** → enroll OTP with a QR code or add a passkey.
 7. Toggle **EN/中文** and the theme (system/light/dark) in the header.
 
@@ -175,9 +175,10 @@ Full design and architecture documentation lives in [`docs/`](docs/README.md):
 | [System Architecture](docs/architecture.md) ([中文](docs/architecture.zh-CN.md)) | C4 context/container/component views, request pipeline, runtime sequences, deployment, quality attributes, traceability |
 | [AI System Design](docs/ai-design.md) ([中文](docs/ai-design.zh-CN.md)) | LLM runtime & degradation, ReAct orchestration, unified tool registry, RAG/BM25, MCP exposure, prompt spec, safety boundary, production upgrade path |
 | [Security Architecture](docs/security.md) | JWT/PBKDF2/TOTP/WebAuthn, 25 RBAC permissions, SSO, MFA policy, audit, threat model |
-| [Data Model](docs/data-model.md) | 17 tables, 4 indexes, JSON columns, ER diagram, seed data |
-| [REST & MCP API Reference](docs/api-reference.md) | All 67 OpenAPI paths, MCP methods, 12 tool schemas, examples |
-| [ADR index](docs/adr/README.md) | 6 accepted architecture decision records + template |
+| [Data Model](docs/data-model.md) | 19 tables, 7 indexes, JSON columns, ER diagram, seed data, lazy migrations |
+| [REST & MCP API Reference](docs/api-reference.md) | All 80 OpenAPI paths, MCP methods, 12 tool schemas, examples |
+| [MCP Skills & Call Journal](docs/mcp-skills.md) | Skill lifecycle, editable skill files, invocation journal, sources and RBAC |
+| [ADR index](docs/adr/README.md) | 7 accepted architecture decision records + template |
 
 Real UI screenshots: [`docs/screenshots/`](docs/screenshots/).
 
@@ -195,7 +196,7 @@ pnpm typecheck && pnpm build
 pnpm check:i18n                         # en/zh key parity
 ```
 
-The smoke suite covers 47 assertions: auth/RBAC (including a 403 denial), form publish/validation/submit, DAG validation and both condition branches, RAG indexing, agent tool loops, MCP handshake/tools/call, SSO demo provisioning, MFA enrollment, audit logs, SPA hosting and API 404 handling.
+The smoke suite covers 69 assertions: auth/RBAC (including a 403 denial), form publish/validation/submit, DAG validation and both condition branches, RAG indexing, agent tool loops, MCP handshake/tools/call, SSO demo provisioning, MFA enrollment, audit logs, SPA hosting and API 404 handling, plus the MCP call journal (recording, statistics, CSV export, clearing) and the full skill lifecycle (install, file CRUD, path traversal rejection, enable/disable/uninstall/reinstall).
 
 ---
 

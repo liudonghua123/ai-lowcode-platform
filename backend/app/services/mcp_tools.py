@@ -7,14 +7,17 @@ from __future__ import annotations
 
 import contextvars
 import json
+import time
 from collections.abc import Callable
 
 from .. import db
 from ..deps import has_permission
-from . import rag, workflow_engine
+from . import mcp_journal, rag, workflow_engine
 
 _current_user: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "mcp_current_user", default=None)
+_call_context: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "mcp_call_context", default=None)
 
 
 def bind_user(user: dict | None) -> None:
@@ -23,6 +26,18 @@ def bind_user(user: dict | None) -> None:
 
 def current_user() -> dict | None:
     return _current_user.get()
+
+
+def bind_context(*, source: str = "internal", transport: str | None = None,
+                 request_id: str | None = None, method: str = "tools/call",
+                 actor: str | None = None) -> None:
+    """Tag the current async context so call_tool can journal the invocation."""
+    _call_context.set({"source": source, "transport": transport, "request_id": request_id,
+                       "method": method, "actor": actor})
+
+
+def call_context() -> dict:
+    return _call_context.get() or {}
 
 
 def _obj(properties: dict, required: list[str] | None = None) -> dict:
@@ -228,23 +243,44 @@ def list_tools(fmt: str = "mcp") -> list[dict]:
              "inputSchema": t["inputSchema"]} for t in TOOL_SPECS]
 
 
-def call_tool(name: str, args: dict | None = None, user: dict | None = None) -> dict:
-    if name not in HANDLERS:
-        raise ValueError(f"Unknown tool: {name}")
+def call_tool(name: str, args: dict | None = None, user: dict | None = None,
+              *, journal: bool = True) -> dict:
+    """Execute a registered tool and optionally write one journal entry.
+
+    The journal is written in ``finally`` so failed calls (validation errors,
+    permission denials, handler exceptions) are recorded as well.
+    """
+    args = args or {}
     effective_user = user if user is not None else current_user()
-    if effective_user:
-        needed = PERMISSION_MAP.get(name)
-        if needed and not has_permission(effective_user, needed):
-            raise PermissionError(f"Permission denied for tool {name}: needs {needed}")
-    if user is not None:
-        previous = _current_user.set(user)
-    else:
-        previous = None
+    ctx = call_context()
+    actor = ctx.get("actor") or (effective_user or {}).get("username") or "anonymous"
+    started = time.perf_counter()
+    status, error, result = "success", None, None
     try:
-        return HANDLERS[name](args or {})
+        if name not in HANDLERS:
+            raise ValueError(f"Unknown tool: {name}")
+        if effective_user:
+            needed = PERMISSION_MAP.get(name)
+            if needed and not has_permission(effective_user, needed):
+                raise PermissionError(f"Permission denied for tool {name}: needs {needed}")
+        previous = _current_user.set(user) if user is not None else None
+        try:
+            result = HANDLERS[name](args)
+        finally:
+            if previous is not None:
+                _current_user.reset(previous)
+        return result
+    except Exception as exc:
+        status, error = "error", str(exc)
+        raise
     finally:
-        if previous is not None:
-            _current_user.reset(previous)
+        if journal:
+            mcp_journal.record(
+                method=ctx.get("method") or "tools/call", tool=name,
+                source=ctx.get("source") or "internal", transport=ctx.get("transport"),
+                actor=actor, arguments=args, status=status, error=error, result=result,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                request_id=ctx.get("request_id"))
 
 
 def as_mcp_content(result: dict) -> dict:

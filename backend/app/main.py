@@ -8,6 +8,8 @@ Run:  uv run uvicorn app.main:app --reload --port 8000
 """
 from __future__ import annotations
 
+import json
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -19,7 +21,7 @@ from . import __version__, db, deps, security, seed
 from .config import settings
 from .mcp_server import build_mcp
 from .routers import agents, audit, auth, forms, knowledge, mcp, meta, rbac, workflows
-from .services import mcp_tools
+from .services import mcp_journal, mcp_tools, skill_files
 
 mcp_routes, mcp_http_app, mcp_mode = build_mcp()
 
@@ -28,8 +30,12 @@ mcp_routes, mcp_http_app, mcp_mode = build_mcp()
 async def lifespan(app: FastAPI):
     db.init_db()
     seeded = seed.seed_if_empty()
+    files = skill_files.bootstrap()
+    mcp_journal.ensure_demo()
     if seeded:
         print(f"[boot] database initialized: {settings.resolved_db_path}")
+    if files["files_created"]:
+        print(f"[boot] skill files materialized: {files['files_created']}")
     print(f"[boot] MCP transport: {mcp_mode} at /mcp ({len(mcp_tools.TOOL_SPECS)} tools)")
     if mcp_http_app is not None:
         async with mcp_http_app.lifespan(mcp_http_app):
@@ -63,25 +69,90 @@ app.add_middleware(
 )
 
 
+# These methods execute a platform tool, which is journaled by
+# mcp_tools.call_tool with arguments / result / duration. Everything else is
+# journaled here at the transport level.
+_TOOL_METHODS = {"tools/call", "resources/read"}
+
+
 class MCPAuthASGIMiddleware:
-    """Bind an optional bearer token to the MCP tool context (pure ASGI, streaming safe)."""
+    """Bind auth + journal context for MCP POST requests (pure ASGI, streaming safe).
+
+    The JSON-RPC body is buffered once so the method name can be logged; a
+    replaying ``receive`` hands the identical body back to the MCP transport.
+    Responses (including SSE) are never buffered.
+    """
 
     def __init__(self, wrapped_app):
         self.wrapped_app = wrapped_app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope.get("path", "").startswith("/mcp"):
-            headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
-            token = headers.get("authorization", "")
-            if token.lower().startswith("bearer "):
-                try:
-                    payload = security.jwt_decode(token.split(" ", 1)[1].strip(), "access")
-                    user = deps._load_user(payload.get("sub"))
-                    if user:
-                        mcp_tools.bind_user(user)
-                except ValueError:
-                    pass
-        await self.wrapped_app(scope, receive, send)
+        is_mcp_post = (scope["type"] == "http"
+                       and scope.get("path", "").startswith("/mcp")
+                       and scope.get("method") == "POST")
+        if not is_mcp_post:
+            await self.wrapped_app(scope, receive, send)
+            return
+
+        headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+        token = headers.get("authorization", "")
+        user = None
+        if token.lower().startswith("bearer "):
+            try:
+                payload = security.jwt_decode(token.split(" ", 1)[1].strip(), "access")
+                user = deps._load_user(payload.get("sub"))
+            except ValueError:
+                user = None
+        if user:
+            mcp_tools.bind_user(user)
+
+        chunks, disconnected = [], False
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                disconnected = True
+                break
+            if message["type"] == "http.request":
+                chunks.append(message.get("body", b""))
+                if not message.get("more_body", False):
+                    break
+        body = b"".join(chunks)
+        sent = False
+
+        async def replay():
+            nonlocal sent
+            if sent:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        try:
+            rpc = json.loads(body or b"{}")
+        except (ValueError, TypeError):
+            rpc = {}
+        method = (rpc.get("method") or "unknown") if isinstance(rpc, dict) else "unknown"
+        actor = (user or {}).get("username") or "anonymous"
+        request_id = db.uid()[:12]
+        mcp_tools.bind_context(source="mcp", transport="streamable-http",
+                               request_id=request_id, method=method, actor=actor)
+        started = time.perf_counter()
+        status, error = "success", None
+        try:
+            if not disconnected:
+                await self.wrapped_app(scope, replay, send)
+        except Exception as exc:
+            status, error = "error", str(exc)
+            raise
+        finally:
+            if (method not in _TOOL_METHODS
+                    and not method.startswith("notifications/")):
+                params = rpc.get("params") if isinstance(rpc, dict) else None
+                mcp_journal.record(
+                    method=method, source="mcp", transport="streamable-http",
+                    actor=actor, arguments=params if isinstance(params, dict) else {},
+                    status=status, error=error, result=None,
+                    duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                    request_id=request_id)
 
 
 app.add_middleware(MCPAuthASGIMiddleware)

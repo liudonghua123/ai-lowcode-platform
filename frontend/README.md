@@ -26,7 +26,7 @@ The Vite dev server proxies `/api` and `/mcp` to `http://127.0.0.1:8000`. After 
 | `/workflows` | Workflow Studio | draggable DAG canvas, bezier edges, connect mode, node config, validate/run, instance logs |
 | `/knowledge` | Knowledge Base | collections, documents, chunking, BM25 retrieval test with assembled context |
 | `/agents` | AI Agents | chat with tool-call steps & source citations, agent config, runtime info, tool catalog |
-| `/mcp` | MCP Skills | platform tool catalog, third-party server registry, sync, REST tool invocation |
+| `/mcp` | MCP Skills | platform tool catalog, installable skill catalog, install/enable/disable/uninstall, editable file manager (view/create/update/delete/reload), call journal dashboard with stats/charts/filters/CSV export, sync, REST tool invocation |
 | `/rbac` | Users & Roles | user/role CRUD, reset password, role×permission matrix |
 | `/auth` | Authentication | SSO provider config, global/role/user MFA policy |
 | `/audit` | Audit Logs | filterable log table with JSON detail viewer |
