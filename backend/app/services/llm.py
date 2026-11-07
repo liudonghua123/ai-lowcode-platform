@@ -23,7 +23,7 @@ import httpx
 
 from .. import db
 from ..config import settings
-from . import mcp_tools, rag
+from . import mcp_tools, model_providers, rag
 
 
 def _agentscope_info() -> dict:
@@ -49,15 +49,19 @@ AGENTSCOPE_INFO = _agentscope_info()
 
 
 def describe() -> dict:
+    cfg = model_providers.effective_llm()
     return {
-        "provider": settings.llm_provider,
-        "model": settings.llm_model,
-        "temperature": settings.llm_temperature,
+        "provider": cfg["provider"],
+        "model": cfg["model"],
+        "temperature": cfg["temperature"],
+        "config_source": cfg["source"],
         "agentscope": AGENTSCOPE_INFO,
         "agentscope_enabled": settings.agentscope_enabled and AGENTSCOPE_INFO["available"],
         "orchestration": "ReAct tool loop (AgentScope-compatible)",
-        "tools": len(mcp_tools.TOOL_SPECS),
-        "has_api_key": bool(settings.llm_api_key),
+        "tools": len(mcp_tools.list_tools()),
+        "has_api_key": bool(cfg["api_key"]),
+        "model_categories": list(model_providers.CATEGORY_CODES),
+        "model_providers": model_providers.meta()["total"],
     }
 
 
@@ -222,17 +226,18 @@ def _mock_chat(messages: list[dict], tools: list[dict] | None) -> dict:
 
 async def _http_chat(messages: list[dict], tools: list[dict] | None,
                      temperature: float | None) -> dict:
+    cfg = model_providers.effective_llm()
     payload: dict[str, Any] = {
-        "model": settings.llm_model, "messages": messages,
-        "temperature": settings.llm_temperature if temperature is None else temperature,
+        "model": cfg["model"], "messages": messages,
+        "temperature": cfg["temperature"] if temperature is None else temperature,
     }
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(
-            f"{settings.llm_base_url.rstrip('/')}/chat/completions", json=payload,
-            headers={"Authorization": f"Bearer {settings.llm_api_key}",
+            f"{cfg['base_url'].rstrip('/')}/chat/completions", json=payload,
+            headers={"Authorization": f"Bearer {cfg['api_key']}",
                      "Content-Type": "application/json"})
         r.raise_for_status()
         msg = r.json()["choices"][0]["message"]
@@ -244,13 +249,15 @@ async def _agentscope_chat(messages: list[dict], tools: list[dict] | None,
                            temperature: float | None) -> dict:
     """Use an agentscope.model chat model when the installed version supports it."""
     from agentscope.model import OpenAIChatModel  # type: ignore
+
+    cfg = model_providers.effective_llm()
     sig = inspect.signature(OpenAIChatModel.__init__)
     candidates = {
-        "model_name": settings.llm_model,
-        "api_key": settings.llm_api_key,
-        "base_url": settings.llm_base_url,
+        "model_name": cfg["model"],
+        "api_key": cfg["api_key"],
+        "base_url": cfg["base_url"],
         "stream": False,
-        "temperature": settings.llm_temperature if temperature is None else temperature,
+        "temperature": cfg["temperature"] if temperature is None else temperature,
     }
     kwargs = {k: v for k, v in candidates.items() if k in sig.parameters}
     model = OpenAIChatModel(**kwargs)
@@ -275,15 +282,16 @@ async def _agentscope_chat(messages: list[dict], tools: list[dict] | None,
 
 async def chat(messages: list[dict], tools: list[dict] | None = None,
                temperature: float | None = None) -> dict:
-    provider = settings.llm_provider
-    if provider == "agentscope" and settings.agentscope_enabled and settings.llm_api_key:
+    cfg = model_providers.effective_llm()
+    provider = cfg["provider"]
+    if provider == "agentscope" and settings.agentscope_enabled and cfg["api_key"]:
         try:
             result = await _agentscope_chat(messages, tools, temperature)
             result["provider"] = "agentscope"
             return result
         except Exception:
             pass
-    if provider in {"openai-compatible", "openai", "agentscope"} and settings.llm_api_key:
+    if provider in {"openai-compatible", "openai", "agentscope"} and cfg["api_key"]:
         try:
             result = await _http_chat(messages, tools, temperature)
             result["provider"] = "openai-compatible"
@@ -301,12 +309,13 @@ async def run_agent(agent: dict, message: str, history: list[dict] | None = None
     kb_ids = agent.get("kb_ids") or []
     hits = rag.search(message, kb_ids or None, top_k=settings.rag_top_k)
     context = rag.build_context(hits)
-    allow_actions = agent.get("mode") in {"act", "hybrid"}
-    tools = mcp_tools.list_tools("openai") if allow_actions else None
-    tool_names = ", ".join(t["name"] for t in mcp_tools.TOOL_SPECS)
+    tools = mcp_tools.agent_tools(agent, "openai") or None
+    tool_names = ", ".join(t["function"]["name"] for t in (tools or [])) or "none"
+    cfg = model_providers.effective_llm()
+    effective_model = agent.get("model") or cfg["model"]
     system = (
         f"{agent.get('system_prompt') or 'You are a helpful platform assistant.'}\n\n"
-        f"[Agent] name={agent.get('name')} mode={agent.get('mode')} model={agent.get('model') or settings.llm_model}\n"
+        f"[Agent] name={agent.get('name')} mode={agent.get('mode')} model={effective_model}\n"
         f"[Available tools] {tool_names}\n"
         "[Rules] Use tools for live platform data and actions. Never invent tool results. "
         "Answer in the same language as the user. Cite knowledge sources when used.\n\n"
@@ -349,7 +358,9 @@ async def run_agent(agent: dict, message: str, history: list[dict] | None = None
     return {
         "answer": answer, "steps": steps,
         "sources": [{"doc_id": h["doc_id"], "title": h["title"], "score": h["score"]} for h in hits],
-        "model": agent.get("model") or settings.llm_model,
+        "model": effective_model,
         "provider": provider_used,
+        "tools_available": len(tools or []),
+        "bound_servers": agent.get("server_ids") or [],
         "orchestration": "ReAct tool loop (AgentScope-compatible)",
     }

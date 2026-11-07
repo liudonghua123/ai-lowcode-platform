@@ -52,6 +52,21 @@ export interface KbDocument {
   id: number; collection_id: number; title: string; content: string
   source?: string; status: string; chunks?: string[]; chunk_count?: number
   content_preview?: string; created_at?: string
+  file_name?: string | null; file_type?: string | null; file_label?: string
+  file_size?: number; parse_status?: string; parse_error?: string | null
+}
+export interface UploadFormat {
+  ext: string; label: string; kind: string; mime: string
+}
+export interface UploadFormats {
+  formats: UploadFormat[]; groups: { kind: string; label: string; items: UploadFormat[] }[]
+  total: number; max_file_bytes: number; max_text_chars: number
+}
+export interface UploadedDoc {
+  id?: number; ok: boolean; file_name: string; title?: string
+  file_type?: string; file_label?: string; file_size?: number
+  parse_status?: string; parse_error?: string | null
+  chars?: number; chunks?: number; error?: string
 }
 export interface RagHit {
   doc_id: number; collection_id: number; collection: string
@@ -60,8 +75,20 @@ export interface RagHit {
 export interface AgentDef {
   id: number; code: string; name: string; description?: string
   mode: 'query' | 'act' | 'hybrid'; model?: string; system_prompt?: string
-  temperature: number; kb_ids: number[]; skill_ids: number[]; workflow_ids: number[]
+  temperature: number; kb_ids: number[]; skill_ids: number[]
+  server_ids: number[]; workflow_ids: number[]
   status: string; created_by?: string; created_at?: string
+}
+export interface BindableItem {
+  id: number; code: string; name: string
+  transport?: string; enabled?: boolean; health?: string; status?: string
+  tool_count?: number; document_count?: number; server_id?: number | null
+  model?: string; category?: string; is_default?: boolean
+}
+export interface AgentBindings {
+  servers: BindableItem[]; skills: BindableItem[]; collections: BindableItem[]
+  workflows: BindableItem[]; models: BindableItem[]; modes: string[]
+  catalog_count: number; counts: Record<string, number>
 }
 export interface ChatStep { tool: string; arguments: Record<string, unknown>; result: Record<string, unknown> }
 export interface ChatResponse {
@@ -80,7 +107,8 @@ export interface McpSkill {
   status: 'installed' | 'disabled' | 'uninstalled' | 'error'
   version?: string; source?: string; description?: string
   manifest?: Record<string, unknown>; installed_at?: string
-  file_count?: number
+  file_count?: number; server_id?: number | null
+  server?: { id: number; code: string; name: string; transport: string; enabled: boolean } | null
 }
 export interface SkillFile {
   id: number; skill_id: number; path: string; content?: string
@@ -91,6 +119,41 @@ export interface CatalogSkill {
   description: string; endpoint?: string; command?: string
   capabilities: string[]; tool_count: number; file_count: number
   files: string[]; installed: boolean; status: string
+}
+export interface McpServer {
+  id: number; code: string; name: string; description?: string
+  transport: string; endpoint?: string | null; command?: string | null
+  auth_config: Record<string, unknown>
+  tools: { name: string; description?: string; inputSchema?: unknown }[]
+  tool_count: number; enabled: boolean; health: string
+  last_sync_at?: string | null; status: string; source?: string
+  created_by?: string; created_at?: string; updated_at?: string
+  skills?: { id: number; code: string; name: string; status: string }[]
+}
+export interface McpServerStats {
+  total: number; enabled: number; declared_tools: number
+  by_status: Record<string, number>; by_transport: Record<string, number>
+}
+export type ModelCategory = 'llm' | 'asr' | 'tts' | 'embedding' | 'rerank' | 'vision'
+export interface ModelCategoryMeta {
+  code: string; label: string; label_zh: string; icon: string
+  description: string; default_model: string; api_path: string; count: number
+}
+export interface ModelVendor {
+  code: string; name: string; base_url: string; models: Record<string, string>
+}
+export interface AiProvider {
+  id: number; code: string; name: string; category: ModelCategory
+  vendor: string; base_url: string; model: string
+  enabled: boolean; is_default: boolean; config: Record<string, unknown>
+  description?: string; has_api_key: boolean; api_key_masked: string
+  category_label: string; created_at?: string; updated_at?: string
+}
+export interface AiProviderMeta {
+  categories: ModelCategoryMeta[]; vendors: ModelVendor[]
+  defaults: Record<string, { code: string; name: string; model: string; enabled: boolean } | null>
+  total: number
+  effective_llm: Record<string, unknown> & { has_api_key: boolean }
 }
 export interface McpCall {
   id: number; request_id?: string; method: string; tool?: string
@@ -131,6 +194,9 @@ export interface Bootstrap {
   rbac: { permissions: Permission[]; roles: Pick<Role, 'id' | 'code' | 'name'>[] }
   auth: { provider_meta: Record<string, unknown>; providers: AuthProvider[]; mfa_methods: string[]; mfa_policy: MfaPolicy }
   agents: { modes: string[]; runtime: Record<string, unknown> }
-  mcp: { types: string[]; endpoint: string; mode: string; tool_count: number }
+  mcp: { types: string[]; endpoint: string; mode: string; tool_count: number
+    builtin_tool_count?: number; server_count?: number }
+  skills?: { catalog_count: number; installed: number; types: string[]; statuses: string[] }
+  ai?: { categories: string[]; providers: number; defaults: Record<string, unknown> }
   user: User
 }

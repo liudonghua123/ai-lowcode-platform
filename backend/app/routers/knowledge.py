@@ -1,12 +1,15 @@
-"""Knowledge base: collections, documents, chunk indexing and RAG search."""
+"""Knowledge base: collections, multi-format document upload, chunk indexing and RAG search."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from .. import db, deps
 from ..config import settings
-from ..services import rag
+from ..services import documents as doc_service
+from ..services import model_providers, rag
 
 router = APIRouter(prefix="/knowledge", tags=["Knowledge Base"])
 
@@ -47,6 +50,63 @@ class SearchIn(BaseModel):
 
 def _collection_out(row: dict) -> dict:
     return row
+
+
+def _document_out(row: dict) -> dict:
+    out = db.loads(row, "chunks") or {}
+    out["file_label"] = doc_service.label_for(out.get("file_type") or "")
+    return out
+
+
+@router.get("/formats", summary="Supported knowledge-base upload formats")
+def upload_formats(_user: dict = Depends(deps.require("knowledge:read"))):
+    return doc_service.formats()
+
+
+@router.post("/upload", status_code=201, summary="Upload and index documents (Office / PDF / Markdown / text / images)")
+async def upload_documents(collection_id: int = Form(...),
+                           files: list[UploadFile] = File(...),
+                           title: str | None = Form(None),
+                           user: dict = Depends(deps.require("knowledge:write")),
+                           request: Request = None):
+    if not db.q1("SELECT id FROM kb_collections WHERE id=?", (collection_id,)):
+        raise HTTPException(status_code=404, detail="Collection not found")
+    if len(files) > 20:
+        raise HTTPException(status_code=400, detail="Upload at most 20 files per request")
+    results: list[dict] = []
+    for upload in files:
+        filename = upload.filename or "upload"
+        try:
+            data = await upload.read()
+            parsed = doc_service.parse(filename, data)
+        except doc_service.UnsupportedFormat as exc:
+            results.append({"file_name": filename, "ok": False, "error": str(exc)})
+            continue
+        except Exception as exc:  # malformed uploads must not abort the batch
+            results.append({"file_name": filename, "ok": False,
+                            "error": f"{type(exc).__name__}: {str(exc)[:180]}"})
+            continue
+        doc_title = (title.strip() if title and len(files) == 1 and title.strip()
+                     else Path(filename).stem) or filename
+        did = db.insert("kb_documents", {
+            "collection_id": collection_id, "title": doc_title,
+            "content": parsed["text"], "source": "upload",
+            "status": "indexed" if parsed["text"] else "empty", "chunks": [],
+            "file_name": parsed["file_name"], "file_type": parsed["file_type"],
+            "file_size": parsed["file_size"], "parse_status": parsed["parse_status"],
+            "parse_error": parsed["parse_error"], "created_at": db.now(),
+        })
+        chunks = rag.index_document(did) if parsed["text"] else 0
+        results.append({"id": did, "ok": True, "title": doc_title,
+                        "file_name": parsed["file_name"], "file_type": parsed["file_type"],
+                        "file_label": parsed["file_label"], "file_size": parsed["file_size"],
+                        "parse_status": parsed["parse_status"], "parse_error": parsed["parse_error"],
+                        "chars": parsed["chars"], "chunks": chunks})
+    created = [r for r in results if r["ok"]]
+    deps.audit(user["username"], "knowledge.upload", f"kb:{collection_id}",
+               {"files": len(files), "created": len(created)}, request=request)
+    return {"uploaded": len(created), "failed": len(results) - len(created),
+            "collection_id": collection_id, "documents": results}
 
 
 @router.get("/collections", summary="List knowledge collections")
@@ -108,6 +168,7 @@ def list_documents(collection_id: int | None = None, q: str | None = None,
         d = db.loads(r, "chunks") or {}
         d["chunk_count"] = len(d.get("chunks") or [])
         d["content_preview"] = (d.get("content") or "")[:180]
+        d["file_label"] = doc_service.label_for(d.get("file_type") or "")
         d.pop("chunks", None)
         out.append(d)
     return {"documents": out, "total": len(out)}
@@ -118,7 +179,7 @@ def get_document(document_id: int, _user: dict = Depends(deps.require("knowledge
     row = db.q1("SELECT * FROM kb_documents WHERE id=?", (document_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Document not found")
-    return db.loads(row, "chunks")
+    return _document_out(row)
 
 
 @router.post("/documents", status_code=201, summary="Create and index a document")
@@ -131,7 +192,7 @@ def create_document(body: DocumentIn, user: dict = Depends(deps.require("knowled
     count = rag.index_document(did)
     deps.audit(user["username"], "knowledge.document.create", f"kb-doc:{did}",
                {"chunks": count}, request=request)
-    return db.loads(db.q1("SELECT * FROM kb_documents WHERE id=?", (did,)), "chunks")
+    return _document_out(db.q1("SELECT * FROM kb_documents WHERE id=?", (did,)) or {})
 
 
 @router.put("/documents/{document_id}", summary="Update and reindex a document")
@@ -144,7 +205,7 @@ def update_document(document_id: int, body: DocumentPatch,
     if "content" in patch:
         rag.index_document(document_id)
     deps.audit(user["username"], "knowledge.document.update", f"kb-doc:{document_id}", {}, request=request)
-    return db.loads(db.q1("SELECT * FROM kb_documents WHERE id=?", (document_id,)), "chunks")
+    return _document_out(db.q1("SELECT * FROM kb_documents WHERE id=?", (document_id,)) or {})
 
 
 @router.post("/documents/{document_id}/reindex")
@@ -180,8 +241,20 @@ def search(body: SearchIn, user: dict = Depends(deps.require("knowledge:read")),
 
 @router.get("/stats", summary="Knowledge base statistics")
 def stats(_user: dict = Depends(deps.require("knowledge:read"))):
+    embedding = model_providers.default_for("embedding")
+    rerank = model_providers.default_for("rerank")
+    by_type = {r["file_type"]: r["count"] for r in db.q(
+        "SELECT file_type, COUNT(*) AS count FROM kb_documents "
+        "WHERE file_type IS NOT NULL GROUP BY file_type")}
     return {"collections": int(db.scalar("SELECT COUNT(*) FROM kb_collections") or 0),
             "documents": int(db.scalar("SELECT COUNT(*) FROM kb_documents") or 0),
             "chunks": sum(len((db.loads(r, "chunks") or {}).get("chunks") or [])
                           for r in db.q("SELECT chunks FROM kb_documents")),
-            "retriever": "bm25-local", "embedding_model": "bm25-local"}
+            "uploaded": int(db.scalar(
+                "SELECT COUNT(*) FROM kb_documents WHERE source='upload'") or 0),
+            "formats_supported": doc_service.formats()["total"],
+            "by_file_type": by_type,
+            "retriever": embedding["model"] if embedding else "bm25-local",
+            "embedding_model": embedding["model"] if embedding else "bm25-local",
+            "embedding_provider": embedding["code"] if embedding else None,
+            "rerank_provider": rerank["model"] if rerank else "none"}

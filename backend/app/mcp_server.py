@@ -99,6 +99,11 @@ def _build_fastmcp() -> tuple[list[Any], Any, str]:
         """Platform dashboard statistics."""
         return mcp_tools.call_tool("get_stats", {})
 
+    @mcp.tool
+    def call_remote_tool(name: str, arguments: dict | None = None) -> dict:
+        """Invoke a tool declared by a registered third-party MCP server."""
+        return mcp_tools.call_tool(name, arguments or {})
+
     http_app = mcp.http_app(
         path="/mcp",
         stateless_http=settings.mcp_stateless,

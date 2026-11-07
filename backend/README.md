@@ -15,7 +15,7 @@ uv run uvicorn app.main:app --reload --port 8000
 - REST: `http://localhost:8000/api/v1` · OpenAPI: `/docs` · MCP: `http://localhost:8000/mcp`
 - If `../frontend/dist` exists it is served at `/` (single-port mode).
 - The database at `data/platform.db` is created and seeded on first boot. Delete it to re-seed.
-- Smoke test: `python tests/smoke.py` (69 assertions, no external services required).
+- Smoke test: `python tests/smoke.py` (110 assertions, no external services required).
 
 ## Layout
 
@@ -52,9 +52,12 @@ app/
 | RBAC | `GET /rbac/permissions`, `/rbac/matrix`, `GET|POST|PUT|DELETE /rbac/users[/{id}]`, `GET|POST|PUT|DELETE /rbac/roles[/{id}]`, `POST /rbac/users/{id}/reset-password`, `POST /rbac/check` |
 | Forms | `GET /forms/field-types`, `GET|POST /forms`, `GET /forms/code/{code}`, `GET|PUT|DELETE /forms/{id}`, `POST /forms/{id}/publish`, `GET|POST /forms/{id}/submissions` |
 | Workflows | `GET /workflows/node-types`, `GET|POST /workflows`, `GET|PUT|DELETE /workflows/{id}`, `POST /workflows/{id}/validate`, `/run`, `GET /workflows/{id}/instances`, `GET /workflows/instances/{id}` |
-| Knowledge | `GET|POST|PUT|DELETE /knowledge/collections[/{id}]`, `GET|POST|PUT|DELETE /knowledge/documents[/{id}]`, `POST /knowledge/documents/{id}/reindex`, `POST /knowledge/search`, `GET /knowledge/stats` |
-| Agents | `GET /agents/meta/runtime`, `GET|POST|PUT|DELETE /agents[/{id}]`, `POST /agents/{id}/chat`, `GET|DELETE /agents/conversations[/{id}]` |
-| MCP | `GET /mcp/tools`, `/mcp/status`, `GET|POST|PUT|DELETE /mcp/skills[/{id}]`, `/mcp/skills/catalog`, `/mcp/skills/install`, `/mcp/skills/{id}/{enable,disable,uninstall,reinstall,sync}`, `/mcp/skills/{id}/files[/...]`, `/mcp/calls[/stats,/export,{id}]`, `POST /mcp/invoke` |
+| Knowledge | `GET|POST|PUT|DELETE /knowledge/collections[/{id}]`, `GET|POST|PUT|DELETE /knowledge/documents[/{id}]`, `POST /knowledge/documents/{id}/reindex`, `POST /knowledge/search`, `GET /knowledge/stats`, `GET /knowledge/formats`, `POST /knowledge/upload` |
+| Agents | `GET /agents/meta/runtime`, `GET /agents/meta/bindings`, `GET|POST|PUT|DELETE /agents[/{id}]`, `POST /agents/{id}/chat`, `GET|DELETE /agents/conversations[/{id}]` |
+| MCP transport | `GET /mcp/tools`, `/mcp/status`, `GET /mcp/calls[/stats,/export,{id}]`, `DELETE /mcp/calls`, `POST /mcp/invoke` |
+| MCP servers | `GET|POST|PUT|DELETE /mcp/servers[/{id}]`, `GET /mcp/servers/summary`, `GET /mcp/servers/{id}/tools`, `POST /mcp/servers/{id}/{sync,enable,disable,invoke}` |
+| Skills | `GET|POST|PUT|DELETE /skills[/{id}]`, `GET /skills/catalog`, `POST /skills/install`, `POST /skills/{id}/{enable,disable,uninstall,reinstall,sync}`, `GET|PUT|DELETE /skills/{id}/files[/...]`, `POST /skills/{id}/files/reload` |
+| AI models | `GET /ai/providers/meta`, `GET|POST|PUT|DELETE /ai/providers[/{id}]`, `POST /ai/providers/{id}/{default,test}` |
 | Audit / meta | `GET /audit/logs`, `/audit/actions`, `GET /meta/health`, `/meta/version`, `/meta/stats`, `/meta/bootstrap`, `GET|PUT /settings` |
 
 Every mutating endpoint writes an audit log; every route is protected by `Depends(deps.require(permission))`.
@@ -67,11 +70,26 @@ Tools are declared once in `services/mcp_tools.py` and reused by the MCP server,
 
 `list_forms`, `get_form`, `submit_form`, `query_records`, `list_workflows`, `get_workflow`, `run_workflow`, `get_workflow_instance`, `list_collections`, `search_knowledge`, `list_users`, `get_stats`.
 
-Third-party MCP servers are registered in the `mcp_skills` table (`builtin` / `http` / `sse` / `stdio`); `POST /mcp/skills/{id}/sync` probes the endpoint with `initialize` + `tools/list` and refreshes its tool catalog. Bearer tokens on `/mcp` are bound to the tool context by a pure-ASGI middleware so tool calls are RBAC-checked.
+**Independent registries.** MCP servers and Skills are separate entities with separate tables, routers and lifecycles (see [ADR-0008](../docs/adr/0008-mcp-skills-split-model-providers-and-knowledge-upload.md)):
 
-**Skill lifecycle.** `GET /mcp/skills/catalog` lists five ready-to-install templates; `POST /mcp/skills/install` materializes a skill plus five editable files (`SKILL.md`, `manifest.json`, `config.json`, `tools.json`, `README.md`) in `mcp_skill_files` and mirrors them to `data/skills/<code>/`. `enable` / `disable` / `uninstall` / `reinstall` manage the `status` state machine; uninstall removes files but keeps the registry entry. File CRUD lives under `/mcp/skills/{id}/files/{path}`, with path-traversal validation and `POST .../files/reload` to re-read the disk mirror.
+| Registry | Table | Router | Responsibility |
+| --- | --- | --- | --- |
+| MCP servers | `mcp_servers` | `/mcp/servers` | Connection config (`transport`, `endpoint` / `command`, `auth_config`), `probe()` + `sync()` tool discovery, health/status, `invoke_on_server()` |
+| Skills | `mcp_skills` | `/skills` | Lifecycle, catalog, manifest, editable files, nullable `server_id` link |
 
-**Call journal.** `mcp_call_logs` records every tool invocation (MCP `tools/call`, REST `invoke`, agent tool steps) and every non-tool JSON-RPC method. The ASGI middleware tags the context with `source`/`actor`/`request_id` and buffers the request body once; `mcp_tools.call_tool()` writes arguments, result preview, status, error and duration in a `finally` block so failures are logged too. `GET /mcp/calls` (filters), `/calls/stats` (aggregates), `/calls/export` (CSV), `/calls/{id}` and `DELETE /calls` are guarded by `mcp:read` / `mcp:write`. See [MCP Skills & Call Journal](../docs/mcp-skills.md).
+`services/mcp_servers.py::declared_tools()` merges enabled-server tools into `mcp_tools.list_tools(include_external=True)`; the `call_remote_tool` MCP bridge forwards a call to the owning server with `mcp:invoke` and a `target=server:<code>` journal entry. `mcp_tools.agent_tools(agent, fmt)` narrows the ReAct tool set to an agent's `server_ids` / `skill_ids` bindings. Deleting either entity never deletes the other.
+
+**MCP servers.** `GET /mcp/servers/summary` exposes registry stats; `POST /mcp/servers` registers a `http` / `sse` / `stdio` connection; `POST /mcp/servers/{id}/sync` probes the endpoint with `initialize` + `tools/list` and refreshes the declared tool list; `GET /mcp/servers/{id}/tools`, `/{id}/enable`, `/{id}/disable` and `/{id}/invoke` complete the surface. Bearer tokens on `/mcp` are bound to the tool context by a pure-ASGI middleware so tool calls are RBAC-checked.
+
+**Skill lifecycle.** `GET /skills/catalog` lists five ready-to-install templates; `POST /skills/install` materializes a skill plus five editable files (`SKILL.md`, `manifest.json`, `config.json`, `tools.json`, `README.md`) in `mcp_skill_files` and mirrors them to `data/skills/<code>/`. `enable` / `disable` / `uninstall` / `reinstall` manage the `status` state machine; uninstall removes files but keeps the registry entry. `POST /skills/{id}/sync` refreshes tools from the linked server (`server_id`). File CRUD lives under `/skills/{id}/files/{path}`, with path-traversal validation and `POST .../files/reload` to re-read the disk mirror.
+
+**AI model services.** `GET /ai/providers/meta` returns six categories (`llm`, `asr`, `tts`, `embedding`, `rerank`, `vision`) and vendors; `GET|POST|PUT|DELETE /ai/providers[/{id}]` manages configurations (`api_key` is write-only — reads return only `has_api_key` / `api_key_masked`); `POST /ai/providers/{id}/default` enforces one default per category and `/{id}/test` probes connectivity. `model_providers.effective_llm()` lets the `llm` default override `LLM_*` environment variables at runtime.
+
+**Knowledge upload.** `GET /knowledge/formats` lists supported extensions; `POST /knowledge/upload` accepts multipart batches parsed by `services/documents.py` (OOXML / OpenDocument / EPUB via stdlib ZIP+XML, PDF via `pdftotext`, images via `tesseract`, plus text/data formats) and immediately chunks/indexes extracted text for BM25. See [Knowledge Upload](../docs/knowledge-upload.md).
+
+**Agent bindings.** `GET /agents/meta/bindings` returns all bindable resources; create/update accepts `kb_ids`, `skill_ids`, `server_ids` and `workflow_ids`, with stale ids removed on save by `routers/agents.py::_clean_ids()`.
+
+**Call journal.** `mcp_call_logs` records every tool invocation (MCP `tools/call`, REST `invoke`, agent tool steps) and every non-tool JSON-RPC method, with a `target` column for external servers. The ASGI middleware tags the context with `source`/`actor`/`request_id` and buffers the request body once; `mcp_tools.call_tool()` writes arguments, result preview, status, error and duration in a `finally` block so failures are logged too. `GET /mcp/calls` (filters), `/calls/stats` (aggregates), `/calls/export` (CSV), `/calls/{id}` and `DELETE /calls` are guarded by `mcp:read` / `mcp:write`. See [MCP Servers, Skills & Call Journal](../docs/mcp-skills.md).
 
 ## Auth & security model
 

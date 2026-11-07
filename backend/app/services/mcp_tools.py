@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 from .. import db
 from ..deps import has_permission
-from . import mcp_journal, rag, workflow_engine
+from . import mcp_journal, mcp_servers, rag, workflow_engine
 
 _current_user: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "mcp_current_user", default=None)
@@ -30,10 +30,10 @@ def current_user() -> dict | None:
 
 def bind_context(*, source: str = "internal", transport: str | None = None,
                  request_id: str | None = None, method: str = "tools/call",
-                 actor: str | None = None) -> None:
+                 actor: str | None = None, target: str | None = None) -> None:
     """Tag the current async context so call_tool can journal the invocation."""
     _call_context.set({"source": source, "transport": transport, "request_id": request_id,
-                       "method": method, "actor": actor})
+                       "method": method, "actor": actor, "target": target})
 
 
 def call_context() -> dict:
@@ -234,13 +234,63 @@ HANDLERS: dict[str, Callable[[dict], dict]] = {
 }
 
 
-def list_tools(fmt: str = "mcp") -> list[dict]:
+def _merged_specs(names: set[str] | None = None,
+                  server_ids: list[int] | None = None) -> list[dict]:
+    """Platform tools + tools declared by enabled MCP servers."""
+    specs = [t for t in TOOL_SPECS if names is None or t["name"] in names]
+    if server_ids is not None and not server_ids:
+        return specs
+    builtin = {t["name"] for t in TOOL_SPECS}
+    for t in mcp_servers.external_specs(names, server_ids):
+        if t["name"] not in builtin:
+            specs.append(t)
+    return specs
+
+
+def list_tools(fmt: str = "mcp", *, names: set[str] | None = None,
+               server_ids: list[int] | None = None,
+               include_external: bool = True) -> list[dict]:
+    specs = _merged_specs(names, server_ids) if include_external else \
+        [t for t in TOOL_SPECS if names is None or t["name"] in names]
     if fmt == "openai":
         return [{"type": "function", "function": {
             "name": t["name"], "description": t["description"],
-            "parameters": t["inputSchema"]}} for t in TOOL_SPECS]
+            "parameters": t["inputSchema"]}} for t in specs]
     return [{"name": t["name"], "description": t["description"],
-             "inputSchema": t["inputSchema"]} for t in TOOL_SPECS]
+             "inputSchema": t["inputSchema"]} for t in specs]
+
+
+def agent_tools(agent: dict, fmt: str = "openai") -> list[dict]:
+    """Build the tool set available to one agent from its bound servers / skills.
+
+    With explicit bindings only tools declared by the selected servers and
+    skills are exposed. Without bindings every enabled server contributes its
+    tools (backwards-compatible default for existing agents).
+    """
+    if agent.get("mode") not in {"act", "hybrid"}:
+        return []
+    server_ids = [int(x) for x in (agent.get("server_ids") or [])]
+    skill_ids = [int(x) for x in (agent.get("skill_ids") or [])]
+    scope = server_ids or None
+    names: set[str] | None = None
+    if server_ids or skill_ids:
+        names = {t["name"] for t in mcp_servers.declared_tools(scope)}
+        if skill_ids:
+            marks = ",".join("?" for _ in skill_ids)
+            for row in db.q(f"SELECT tools, server_id FROM mcp_skills WHERE id IN ({marks})",
+                            tuple(skill_ids)):
+                loaded = db.loads(row, "tools") or {}
+                for tool in loaded.get("tools") or []:
+                    if isinstance(tool, dict) and tool.get("name"):
+                        names.add(tool["name"])
+                linked = row.get("server_id")
+                if linked:
+                    names |= {t["name"] for t in mcp_servers.declared_tools([int(linked)])}
+        available = {t["name"] for t in list_tools("mcp", server_ids=scope)}
+        names &= available
+        if not names:
+            names = None  # bindings declare nothing callable → keep the safe default
+    return list_tools(fmt, names=names, server_ids=scope)
 
 
 def call_tool(name: str, args: dict | None = None, user: dict | None = None,
@@ -257,15 +307,22 @@ def call_tool(name: str, args: dict | None = None, user: dict | None = None,
     started = time.perf_counter()
     status, error, result = "success", None, None
     try:
+        external = None
         if name not in HANDLERS:
-            raise ValueError(f"Unknown tool: {name}")
+            external = mcp_servers.find_external(name)
+            if not external:
+                raise ValueError(f"Unknown tool: {name}")
         if effective_user:
-            needed = PERMISSION_MAP.get(name)
+            needed = PERMISSION_MAP.get(name) or ("mcp:invoke" if external else None)
             if needed and not has_permission(effective_user, needed):
                 raise PermissionError(f"Permission denied for tool {name}: needs {needed}")
         previous = _current_user.set(user) if user is not None else None
         try:
-            result = HANDLERS[name](args)
+            if external:
+                server, _spec = external
+                result = mcp_servers.invoke_external(server, name, args)
+            else:
+                result = HANDLERS[name](args)
         finally:
             if previous is not None:
                 _current_user.reset(previous)
@@ -279,6 +336,7 @@ def call_tool(name: str, args: dict | None = None, user: dict | None = None,
                 method=ctx.get("method") or "tools/call", tool=name,
                 source=ctx.get("source") or "internal", transport=ctx.get("transport"),
                 actor=actor, arguments=args, status=status, error=error, result=result,
+                target=ctx.get("target"),
                 duration_ms=round((time.perf_counter() - started) * 1000, 2),
                 request_id=ctx.get("request_id"))
 

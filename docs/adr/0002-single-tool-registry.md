@@ -47,4 +47,4 @@ All three consumers call `call_tool()`; the fastmcp layer only adapts typed Pyth
 
 ## Verification
 
-`backend/tests/smoke.py` asserts MCP `tools/list` returns the 12 tools, `tools/call` and `/mcp/invoke` produce identical results, act/hybrid agents execute ≥2 real tool calls, and RBAC denial is enforced at the tool layer. Result: **69 passed / 0 failed**.
+`backend/tests/smoke.py` asserts MCP `tools/list` returns the 12 tools, `tools/call` and `/mcp/invoke` produce identical results, act/hybrid agents execute ≥2 real tool calls, and RBAC denial is enforced at the tool layer. Result: **110 passed / 0 failed**.

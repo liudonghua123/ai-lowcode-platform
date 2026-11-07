@@ -261,7 +261,7 @@ The system prompt is assembled deterministically in `run_agent()`:
 | Method | Result |
 | --- | --- |
 | `initialize` | `protocolVersion` (negotiated), `capabilities{tools,prompts,resources}`, `serverInfo{name,version}`, `instructions` |
-| `tools/list` | 12 tools from `TOOL_SPECS` |
+| `tools/list` | 12 tools from `TOOL_SPECS`, plus the `call_remote_tool` bridge |
 | `tools/call` | RBAC-checked handler result as MCP content |
 | `resources/list` | `platform://stats`, `platform://forms/{code}`, `platform://workflows/{code}` |
 | `prompts/list` | `analyze_workflow`, `answer_from_kb` |
@@ -270,17 +270,24 @@ The system prompt is assembled deterministically in `run_agent()`:
 
 `MCPAuthASGIMiddleware` is a pure ASGI wrapper: for `/mcp` requests it decodes the optional bearer token, loads the user via `security.jwt_decode` + `deps._load_user`, and calls `mcp_tools.bind_user(user)`. With no token, read-only anonymous use is permitted; with a token, every tool call is RBAC-checked. This keeps MCP usable from external clients without bypassing platform authorization (see [ADR-0005](adr/0005-mcp-transport-and-auth.md)).
 
-### 9.4 Third-party MCP skills
+### 9.4 Independent MCP server and Skill registries
 
-`mcp_skills` records external servers (`http` / `sse` / `stdio`), their config and synced tool lists. `POST /api/v1/mcp/skills/{id}/sync` refreshes tool catalogs; the registry UI and `/mcp/status` expose mode, tool count and provider state. Platform tools and third-party skills are kept in separate namespaces.
+MCP servers and Skills are **separate entities with separate routers, tables and lifecycles** (see [ADR-0008](adr/0008-mcp-skills-split-model-providers-and-knowledge-upload.md) and [MCP-001](mcp-skills.md)):
+
+| Registry | Table | Router | Responsibility |
+| --- | --- | --- | --- |
+| MCP servers | `mcp_servers` | `/mcp/servers` | Connection config (`transport`, `endpoint` / `command`, `auth_config`), `probe()` + `sync()` tool discovery, health/status, `invoke_on_server()` |
+| Skills | `mcp_skills` | `/skills` | Lifecycle (`installed` / `disabled` / `uninstalled` / `error`), catalog, manifest, editable files, optional `server_id` link |
+
+`mcp_skills.server_id` is a nullable, non-owning link: deleting a server never deletes its skills and vice versa. `services/mcp_servers.py::declared_tools(server_ids)` merges enabled-server tools into `mcp_tools.list_tools(include_external=True)`; the `call_remote_tool` MCP bridge forwards an invocation to the owning server with `mcp:invoke` permission and a `target=server:<code>` journal entry. `mcp_tools.agent_tools(agent, fmt)` narrows the ReAct tool set to an agent's `server_ids` / `skill_ids`, so unbound servers are invisible and uncallable. Platform tools and external tools remain in separate namespaces.
 
 ### 9.5 Skill lifecycle and editable files
 
-`mcp_skills` now carries a `status` state machine (`installed` / `disabled` / `uninstalled` / `error`), `version`, `source`, `manifest` and install timestamps. `GET /mcp/skills/catalog` exposes five installable templates; `POST /mcp/skills/install` materializes a skill plus five editable files in `mcp_skill_files`, mirrored to `data/skills/<code>/`. `enable` / `disable` / `uninstall` / `reinstall` and full file CRUD (with path-traversal validation) are available from the UI. See [MCP-001](mcp-skills.md) and [ADR-0007](adr/0007-mcp-skill-lifecycle-and-journal.md).
+The independent Skill registry (`mcp_skills`, served by `/skills`) now carries a `status` state machine (`installed` / `disabled` / `uninstalled` / `error`), `version`, `source`, `manifest`, install timestamps and a nullable `server_id` link. `GET /skills/catalog` exposes five installable templates; `POST /skills/install` materializes a skill plus five editable files in `mcp_skill_files`, mirrored to `data/skills/<code>/`. `enable` / `disable` / `uninstall` / `reinstall` and full file CRUD (with path-traversal validation) are available from the UI. See [MCP-001](mcp-skills.md) and [ADR-0007](adr/0007-mcp-skill-lifecycle-and-journal.md).
 
 ### 9.6 Call journal
 
-`mcp_call_logs` records every tool invocation across `mcp`, `rest`, `agent` and `internal` sources. `mcp_tools.call_tool()` writes arguments, result preview, status, error and duration in a `finally` block (best-effort), while the ASGI middleware buffers the JSON-RPC body once to log non-tool methods such as `initialize` and `tools/list`. `GET /mcp/calls`, `/calls/stats`, `/calls/export`, `/calls/{id}` and `DELETE /mcp/calls` power the journal dashboard. Internal dashboard aggregation passes `journal=False` to avoid noise.
+`mcp_call_logs` records every tool invocation across `mcp`, `rest`, `agent` and `internal` sources, with a `target` column identifying the owning MCP server (`server:<code>`) for external calls. `mcp_tools.call_tool()` writes arguments, result preview, status, error and duration in a `finally` block (best-effort), while the ASGI middleware buffers the JSON-RPC body once to log non-tool methods such as `initialize` and `tools/list`. `GET /mcp/calls`, `/calls/stats`, `/calls/export`, `/calls/{id}` and `DELETE /mcp/calls` power the journal dashboard. Internal dashboard aggregation passes `journal=False` to avoid noise.
 
 ## 10. Governance and safety boundary
 
@@ -290,7 +297,7 @@ The system prompt is assembled deterministically in `run_agent()`:
 | Identity leak across requests | `ContextVar` binding + explicit `user` argument; `try/finally` resets the previous context |
 | Prompt injection via knowledge content | Retrieved text is placed in a clearly delimited `[Knowledge Context]` block with an explicit "never invent tool results" rule; write tools still require RBAC |
 | Runaway tool cascades | `max_rounds=5`, ≤3 intents per mock turn, `top_k` cap 10, context cap 2200 chars |
-| Secret exposure | `/auth/providers` never returns raw provider config; `list_users` nulls `password_hash`; runtime exposes only `has_api_key` boolean |
+| Secret exposure | `/auth/providers` never returns raw provider config; `list_users` nulls `password_hash`; `ai_providers.api_key` is write-only — responses expose only `has_api_key` / `api_key_masked` |
 | Untraceable actions | `deps.audit()` records every mutation; conversations persist agent turns |
 | Unbounded external calls | 60 s `httpx` timeout; failures degrade to `mock` instead of failing the request |
 
@@ -304,14 +311,22 @@ The system prompt is assembled deterministically in `run_agent()`:
 | `mode` | `query \| act \| hybrid` | gates tool availability |
 | `system_prompt` | text | injected verbatim as the first system line |
 | `kb_ids` | JSON array of collection ids | scopes RAG (`None` = all collections) |
-| `model`, `temperature` | string / float | overrides `settings` |
+| `skill_ids` | JSON array of skill ids | scopes Skill-declared tools |
+| `server_ids` | JSON array of MCP server ids | scopes external tools from enabled servers |
+| `workflow_ids` | JSON array of workflow ids | declarative workflow binding |
+| `model`, `temperature` | string / float | overrides `settings` / the `llm` provider default |
 | `enabled` | int | UI visibility / availability |
 | conversations | JSON turns | `conversations` table, last 6 replayed |
 
+`GET /agents/meta/bindings` returns all four bindable resource groups (knowledge collections, skills, MCP servers, workflows) in one call, so the create dialog can offer searchable multi-select binding. On create/update, `routers/agents.py::_clean_ids()` drops ids that no longer exist, preventing dangling bindings. `mcp_tools.agent_tools()` then enforces the binding at runtime.
+
 ## 12. Observability and persistence
 
-- `GET /api/v1/agents/meta/runtime` — provider, model, AgentScope modules, tool count.
-- `GET /api/v1/mcp/status` — MCP mode (`fastmcp` / `builtin-jsonrpc`), tool count, skills state.
+- `GET /api/v1/agents/meta/runtime` — provider, model, AgentScope modules, tool count, `model_providers` metadata.
+- `GET /api/v1/agents/meta/bindings` — bindable knowledge / skill / MCP server / workflow resources.
+- `GET /api/v1/ai/providers/meta` — AI model categories and vendors.
+- `GET /api/v1/knowledge/formats` — supported upload formats and parser availability.
+- `GET /api/v1/mcp/status` — MCP mode (`fastmcp` / `builtin-jsonrpc`), tool count, server/skill state.
 - `steps[]` in every chat response — full tool name, arguments and result.
 - `sources[]` — retrieval evidence with BM25 score.
 - `audit_logs` — actor/action/resource/detail/ip/level/timestamp for writes.
@@ -320,13 +335,13 @@ The system prompt is assembled deterministically in `run_agent()`:
 
 ## 13. Test coverage
 
-`backend/tests/smoke.py` includes dedicated AI assertions: RAG search with mixed zh/en query, document auto-indexing, query agent returning `sources`, act/hybrid agents executing ≥2 real tool calls, tool-result summarization, `tools/list` and `tools/call` over `/mcp`, REST `/mcp/invoke`, third-party skill sync, and RBAC denial for tool calls. Total: **69 passed / 0 failed**. The call journal and skill lifecycle add 22 assertions (recording, statistics, CSV export, clearing, catalog, install, file CRUD, path traversal, enable/disable/uninstall/reinstall).
+`backend/tests/smoke.py` includes dedicated AI assertions: RAG search with mixed zh/en query, document auto-indexing, query agent returning `sources`, act/hybrid agents executing ≥2 real tool calls, tool-result summarization, `tools/list` and `tools/call` over `/mcp`, REST `/mcp/invoke`, third-party skill sync, and RBAC denial for tool calls. Total: **110 passed / 0 failed**. The call journal and skill lifecycle add 63 assertions (recording, statistics, CSV export, clearing, catalog, install, file CRUD, path traversal, enable/disable/uninstall/reinstall).
 
 ## 14. Production upgrade path
 
 | Current | Upgrade |
 | --- | --- |
-| `mock` intent recognition | Set `LLM_PROVIDER=openai-compatible` (or `agentscope`) + `LLM_API_KEY`; the ReAct loop and tool schemas are already model-agnostic |
+| `mock` intent recognition | Set `LLM_PROVIDER=openai-compatible` (or `agentscope`) + `LLM_API_KEY`, or mark an `llm` provider as default in `/ai/providers` (it overrides `LLM_*` at runtime); the ReAct loop and tool schemas are model-agnostic |
 | BM25 over SQLite | Replace `rag.search` with a vector/embedding store; keep `build_context` contract |
 | Synchronous workflow execution | Move `run_workflow` handler to a task queue |
 | Anonymous MCP read | Require bearer token; add per-client scopes and rate limiting |
@@ -342,6 +357,10 @@ The system prompt is assembled deterministically in `run_agent()`:
 | Tool registry | `services/mcp_tools.py` | smoke: invoke, tools/list, RBAC |
 | RAG | `services/rag.py` | smoke: zh/en retrieval, reindex |
 | MCP transports | `mcp_server.py`, `main.py` | smoke: initialize/list/call |
+| Split MCP server / Skill registries | `services/mcp_servers.py`, `routers/mcp_servers.py`, `routers/skills.py` | smoke: independent CRUD, sync, linked-server isolation |
+| AI model providers | `services/model_providers.py`, `routers/ai_providers.py` | smoke: categories, defaults, key masking, `effective_llm()` |
+| Knowledge upload | `services/documents.py`, `routers/knowledge.py` | smoke: docx/xlsx/pdf/csv/md parse, format rejection, stats |
+| Agent bindings | `routers/agents.py`, `services/mcp_tools.py::agent_tools` | smoke: `/meta/bindings`, create/update cleanup, bound chat |
 | Governance | `deps.py`, `main.py::MCPAuthASGIMiddleware` | smoke: RBAC denial |
 
-Related decisions: [ADR-0002](adr/0002-single-tool-registry.md), [ADR-0003](adr/0003-offline-first-llm-runtime.md), [ADR-0004](adr/0004-sqlite-and-local-bm25.md), [ADR-0005](adr/0005-mcp-transport-and-auth.md).
+Related decisions: [ADR-0002](adr/0002-single-tool-registry.md), [ADR-0003](adr/0003-offline-first-llm-runtime.md), [ADR-0004](adr/0004-sqlite-and-local-bm25.md), [ADR-0005](adr/0005-mcp-transport-and-auth.md), [ADR-0007](adr/0007-mcp-skill-lifecycle-and-journal.md), [ADR-0008](adr/0008-mcp-skills-split-model-providers-and-knowledge-upload.md).

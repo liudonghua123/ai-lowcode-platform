@@ -261,7 +261,7 @@ $$\text{IDF}(t)=\ln\left(1+\frac{N-\text{df}(t)+0.5}{\text{df}(t)+0.5}\right)$$
 | 方法 | 结果 |
 | --- | --- |
 | `initialize` | `protocolVersion`（协商）、`capabilities{tools,prompts,resources}`、`serverInfo{name,version}`、`instructions` |
-| `tools/list` | 来自 `TOOL_SPECS` 的 12 个工具 |
+| `tools/list` | 来自 `TOOL_SPECS` 的 12 个工具，外加 `call_remote_tool` 桥接工具 |
 | `tools/call` | 经 RBAC 校验的 handler 结果，包装为 MCP content |
 | `resources/list` | `platform://stats`、`platform://forms/{code}`、`platform://workflows/{code}` |
 | `prompts/list` | `analyze_workflow`、`answer_from_kb` |
@@ -270,17 +270,24 @@ $$\text{IDF}(t)=\ln\left(1+\frac{N-\text{df}(t)+0.5}{\text{df}(t)+0.5}\right)$$
 
 `MCPAuthASGIMiddleware` 是纯 ASGI 包装层：对 `/mcp` 请求解析可选 Bearer Token，经 `security.jwt_decode` + `deps._load_user` 加载用户，并调用 `mcp_tools.bind_user(user)`。无 Token 时允许匿名只读；带 Token 时每次工具调用都做 RBAC 校验。既让外部 MCP 客户端可用，又不绕过平台授权（见 [ADR-0005](adr/0005-mcp-transport-and-auth.md)）。
 
-### 9.4 第三方 MCP skills
+### 9.4 MCP 服务与技能两套独立注册表
 
-`mcp_skills` 记录外部服务（`http` / `sse` / `stdio`）、配置与已同步的工具列表。`POST /api/v1/mcp/skills/{id}/sync` 刷新工具目录；管理界面与 `/mcp/status` 展示模式、工具数与 Provider 状态。平台工具与第三方技能保持命名空间隔离。
+MCP 服务与技能是**独立实体，各自拥有路由、数据表与生命周期**（见 [ADR-0008](adr/0008-mcp-skills-split-model-providers-and-knowledge-upload.md) 与 [MCP-001](mcp-skills.md)）：
+
+| 注册表 | 数据表 | 路由 | 职责 |
+| --- | --- | --- | --- |
+| MCP 服务 | `mcp_servers` | `/mcp/servers` | 连接配置（`transport`、`endpoint` / `command`、`auth_config`）、`probe()` + `sync()` 工具发现、健康/状态、`invoke_on_server()` |
+| 技能 | `mcp_skills` | `/skills` | 生命周期（`installed` / `disabled` / `uninstalled` / `error`）、目录、manifest、可编辑文件、可选 `server_id` 关联 |
+
+`mcp_skills.server_id` 是可空的非拥有型关联：删除服务不会删除其技能，反之亦然。`services/mcp_servers.py::declared_tools(server_ids)` 把已启用服务声明的工具合并进 `mcp_tools.list_tools(include_external=True)`；`call_remote_tool` MCP 桥接工具以 `mcp:invoke` 权限把调用转发给所属服务，并写入 `target=server:<code>` 的日记记录。`mcp_tools.agent_tools(agent, fmt)` 按智能体的 `server_ids` / `skill_ids` 收窄 ReAct 工具集，未绑定的服务既不可见也不可调用。平台工具与外部工具仍保持命名空间隔离。
 
 ### 9.5 技能生命周期与可编辑文件
 
-`mcp_skills` 新增 `status` 状态机（`installed` / `disabled` / `uninstalled` / `error`）、`version`、`source`、`manifest` 与安装时间戳。`GET /mcp/skills/catalog` 提供 5 个可安装模板；`POST /mcp/skills/install` 安装技能并在 `mcp_skill_files` 中生成 5 个可编辑文件，同时镜像到 `data/skills/<code>/`。界面支持 `enable` / `disable` / `uninstall` / `reinstall` 以及完整的文件增删查改（含路径穿越校验）。详见 [MCP-001](mcp-skills.md) 与 [ADR-0007](adr/0007-mcp-skill-lifecycle-and-journal.md)。
+独立的技能注册表（`mcp_skills`，由 `/skills` 提供）新增 `status` 状态机（`installed` / `disabled` / `uninstalled` / `error`）、`version`、`source`、`manifest`、安装时间戳，以及可空的 `server_id` 关联。`GET /skills/catalog` 提供 5 个可安装模板；`POST /skills/install` 安装技能并在 `mcp_skill_files` 中生成 5 个可编辑文件，同时镜像到 `data/skills/<code>/`。界面支持 `enable` / `disable` / `uninstall` / `reinstall` 以及完整的文件增删查改（含路径穿越校验）。详见 [MCP-001](mcp-skills.md) 与 [ADR-0007](adr/0007-mcp-skill-lifecycle-and-journal.md)。
 
 ### 9.6 调用日记
 
-`mcp_call_logs` 记录 `mcp`、`rest`、`agent`、`internal` 四类来源的每次工具调用。`mcp_tools.call_tool()` 在 `finally` 中写入参数、结果预览、状态、错误与耗时（尽力而为，不影响调用）；ASGI 中间件一次性缓冲 JSON-RPC 请求体，以记录 `initialize`、`tools/list` 等非工具方法。`GET /mcp/calls`、`/calls/stats`、`/calls/export`、`/calls/{id}` 与 `DELETE /mcp/calls` 支撑日记看板。内部仪表盘聚合通过 `journal=False` 避免产生噪音。
+`mcp_call_logs` 记录 `mcp`、`rest`、`agent`、`internal` 四类来源的每次工具调用，并通过 `target` 列标识外部调用所属的 MCP 服务（`server:<code>`）。`mcp_tools.call_tool()` 在 `finally` 中写入参数、结果预览、状态、错误与耗时（尽力而为，不影响调用）；ASGI 中间件一次性缓冲 JSON-RPC 请求体，以记录 `initialize`、`tools/list` 等非工具方法。`GET /mcp/calls`、`/calls/stats`、`/calls/export`、`/calls/{id}` 与 `DELETE /mcp/calls` 支撑日记看板。内部仪表盘聚合通过 `journal=False` 避免产生噪音。
 
 ## 10. 治理与安全边界
 
@@ -290,7 +297,7 @@ $$\text{IDF}(t)=\ln\left(1+\frac{N-\text{df}(t)+0.5}{\text{df}(t)+0.5}\right)$$
 | 请求间身份串漏 | `ContextVar` 绑定 + 显式 `user` 参数；`try/finally` 复位上下文 |
 | 知识内容提示注入 | 检索文本置于明确分隔的 `[Knowledge Context]` 区块，配合"绝不编造工具结果"规则；写工具仍需 RBAC |
 | 工具级联失控 | `max_rounds=5`、mock 每轮 ≤3 意图、`top_k` 上限 10、上下文上限 2200 字符 |
-| 密钥泄漏 | `/auth/providers` 不返回原始配置；`list_users` 把 `password_hash` 置空；运行时仅暴露 `has_api_key` 布尔值 |
+| 密钥泄漏 | `/auth/providers` 不返回原始配置；`list_users` 把 `password_hash` 置空；`ai_providers.api_key` 只写，响应仅暴露 `has_api_key` / `api_key_masked` |
 | 操作不可追溯 | `deps.audit()` 记录所有写操作；会话持久化智能体对话 |
 | 外部调用无界 | `httpx` 60 s 超时；失败降级到 `mock` 而非让请求失败 |
 
@@ -304,14 +311,22 @@ $$\text{IDF}(t)=\ln\left(1+\frac{N-\text{df}(t)+0.5}{\text{df}(t)+0.5}\right)$$
 | `mode` | `query \| act \| hybrid` | 决定是否提供工具 |
 | `system_prompt` | text | 原样注入系统提示首行 |
 | `kb_ids` | JSON 数组（集合 id） | 限定 RAG 范围（`None` = 全部集合） |
-| `model`、`temperature` | string / float | 覆盖 `settings` |
+| `skill_ids` | JSON 数组（技能 id） | 限定技能声明的工具 |
+| `server_ids` | JSON 数组（MCP 服务 id） | 限定已启用服务提供的外部工具 |
+| `workflow_ids` | JSON 数组（流程 id） | 声明式流程绑定 |
+| `model`、`temperature` | string / float | 覆盖 `settings` / `llm` 类别默认项 |
 | `enabled` | int | 界面可见性 / 可用性 |
 | conversations | JSON 轮次 | `conversations` 表，回放最近 6 轮 |
 
+`GET /agents/meta/bindings` 一次返回四类可绑定资源（知识库集合、技能、MCP 服务、工作流），使创建对话框可提供带搜索的多选绑定。创建/更新时 `routers/agents.py::_clean_ids()` 会丢弃已不存在的 id，避免悬空绑定；运行时再由 `mcp_tools.agent_tools()` 落实该绑定。
+
 ## 12. 可观测性与持久化
 
-- `GET /api/v1/agents/meta/runtime` — provider、model、AgentScope 模块、工具数。
-- `GET /api/v1/mcp/status` — MCP 模式（`fastmcp` / `builtin-jsonrpc`）、工具数、技能状态。
+- `GET /api/v1/agents/meta/runtime` — provider、model、AgentScope 模块、工具数、`model_providers` 元数据。
+- `GET /api/v1/agents/meta/bindings` — 可绑定的知识库 / 技能 / MCP 服务 / 工作流资源。
+- `GET /api/v1/ai/providers/meta` — AI 模型类别与厂商。
+- `GET /api/v1/knowledge/formats` — 支持的上传格式与解析器可用性。
+- `GET /api/v1/mcp/status` — MCP 模式（`fastmcp` / `builtin-jsonrpc`）、工具数、服务/技能状态。
 - 每次对话响应的 `steps[]` — 完整工具名、参数与结果。
 - `sources[]` — 带 BM25 分数的检索证据。
 - `audit_logs` — 写操作的 actor/action/resource/detail/ip/level/timestamp。
@@ -320,13 +335,13 @@ $$\text{IDF}(t)=\ln\left(1+\frac{N-\text{df}(t)+0.5}{\text{df}(t)+0.5}\right)$$
 
 ## 13. 测试覆盖
 
-`backend/tests/smoke.py` 含专门的 AI 断言：中英混合 RAG 检索、文档自动索引、query 智能体返回 `sources`、act/hybrid 智能体执行 ≥2 次真实工具调用、工具结果摘要、`/mcp` 的 `tools/list` 与 `tools/call`、REST `/mcp/invoke`、第三方技能同步，以及工具调用的 RBAC 拒绝。合计 **69 passed / 0 failed**（调用日记与技能生命周期新增 22 项断言：记录、统计、CSV 导出、清空、目录、安装、文件增删查改、路径穿越、启用/禁用/卸载/重装）。
+`backend/tests/smoke.py` 含专门的 AI 断言：中英混合 RAG 检索、文档自动索引、query 智能体返回 `sources`、act/hybrid 智能体执行 ≥2 次真实工具调用、工具结果摘要、`/mcp` 的 `tools/list` 与 `tools/call`、REST `/mcp/invoke`、第三方技能同步，以及工具调用的 RBAC 拒绝。合计 **110 passed / 0 failed**（调用日记与技能生命周期新增 63 项断言：记录、统计、CSV 导出、清空、目录、安装、文件增删查改、路径穿越、启用/禁用/卸载/重装）。
 
 ## 14. 生产升级路径
 
 | 当前 | 升级方式 |
 | --- | --- |
-| `mock` 意图识别 | 设置 `LLM_PROVIDER=openai-compatible`（或 `agentscope`）+ `LLM_API_KEY`；ReAct 循环与工具 Schema 已与模型无关 |
+| `mock` 意图识别 | 设置 `LLM_PROVIDER=openai-compatible`（或 `agentscope`）+ `LLM_API_KEY`，或在 `/ai/providers` 中把某个 `llm` 配置设为默认（运行时覆盖 `LLM_*`）；ReAct 循环与工具 Schema 已与模型无关 |
 | SQLite 上的 BM25 | 用向量/embedding 库替换 `rag.search`，保持 `build_context` 契约 |
 | 流程同步执行 | 把 `run_workflow` handler 迁到任务队列 |
 | 匿名 MCP 只读 | 强制 Bearer Token，增加客户端 scope 与限流 |
@@ -342,6 +357,10 @@ $$\text{IDF}(t)=\ln\left(1+\frac{N-\text{df}(t)+0.5}{\text{df}(t)+0.5}\right)$$
 | 工具注册表 | `services/mcp_tools.py` | 冒烟：invoke、tools/list、RBAC |
 | RAG | `services/rag.py` | 冒烟：中英检索、重建索引 |
 | MCP 双传输 | `mcp_server.py`、`main.py` | 冒烟：initialize/list/call |
+| MCP 服务 / 技能独立注册表 | `services/mcp_servers.py`、`routers/mcp_servers.py`、`routers/skills.py` | 冒烟：独立 CRUD、同步、关联隔离 |
+| AI 模型服务 | `services/model_providers.py`、`routers/ai_providers.py` | 冒烟：类别、默认项、密钥脱敏、`effective_llm()` |
+| 知识库上传 | `services/documents.py`、`routers/knowledge.py` | 冒烟：docx/xlsx/pdf/csv/md 解析、格式拒绝、stats |
+| 智能体绑定 | `routers/agents.py`、`services/mcp_tools.py::agent_tools` | 冒烟：`/meta/bindings`、创建/更新清理、绑定后对话 |
 | 治理 | `deps.py`、`main.py::MCPAuthASGIMiddleware` | 冒烟：RBAC 拒绝 |
 
-相关决策：[ADR-0002](adr/0002-single-tool-registry.md)、[ADR-0003](adr/0003-offline-first-llm-runtime.md)、[ADR-0004](adr/0004-sqlite-and-local-bm25.md)、[ADR-0005](adr/0005-mcp-transport-and-auth.md)。
+相关决策：[ADR-0002](adr/0002-single-tool-registry.md)、[ADR-0003](adr/0003-offline-first-llm-runtime.md)、[ADR-0004](adr/0004-sqlite-and-local-bm25.md)、[ADR-0005](adr/0005-mcp-transport-and-auth.md)、[ADR-0007](adr/0007-mcp-skill-lifecycle-and-journal.md)、[ADR-0008](adr/0008-mcp-skills-split-model-providers-and-knowledge-upload.md)。

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from . import db, security
 from .config import settings
+from .services import model_providers, skill_catalog
 
 PERMISSIONS = [
     ("dashboard:view", "View dashboard", "dashboard", "view"),
@@ -170,7 +171,7 @@ AGENTS = [
         "description": "Answers questions grounded in the platform knowledge base (RAG).",
         "system_prompt": "You are a precise enterprise knowledge assistant. Answer strictly from the provided "
                          "context. Cite the source document titles. If the context is insufficient, say so.",
-        "kb_ids": [1, 2], "skill_ids": [1], "workflow_ids": [], "temperature": 0.2,
+        "kb_ids": [1, 2], "skill_ids": [], "server_ids": [], "workflow_ids": [], "temperature": 0.2,
     },
     {
         "code": "ops_agent", "name": "Operations Agent / 流程操作智能体",
@@ -178,7 +179,7 @@ AGENTS = [
         "description": "Executes platform actions: submit forms, run workflows, query records, invoke MCP tools.",
         "system_prompt": "You are an operations agent. Translate the user's intent into platform tool calls. "
                          "Always confirm before destructive actions and report the tool result.",
-        "kb_ids": [], "skill_ids": [1], "workflow_ids": [1], "temperature": 0.1,
+        "kb_ids": [], "skill_ids": [2], "server_ids": [1], "workflow_ids": [1], "temperature": 0.1,
     },
     {
         "code": "general_copilot", "name": "AI Copilot / 全能助手",
@@ -186,8 +187,26 @@ AGENTS = [
         "description": "Hybrid agent that retrieves knowledge and performs actions in one conversation.",
         "system_prompt": "You are the platform copilot. Retrieve relevant knowledge first, then decide whether "
                          "an action (form submission, workflow run, record query) is needed.",
-        "kb_ids": [1, 2], "skill_ids": [1], "workflow_ids": [1, 2], "temperature": 0.3,
+        "kb_ids": [1, 2], "skill_ids": [1, 3], "server_ids": [1, 2],
+        "workflow_ids": [1, 2], "temperature": 0.3,
     },
+]
+
+# The built-in server declares every platform tool so agent bindings can be
+# expressed as a plain list of server ids.
+BUILTIN_TOOLS = [
+    {"name": "list_forms", "description": "List all form definitions"},
+    {"name": "get_form", "description": "Get one form definition by code"},
+    {"name": "submit_form", "description": "Submit data to a published form"},
+    {"name": "query_records", "description": "Query form submissions"},
+    {"name": "list_workflows", "description": "List workflow definitions"},
+    {"name": "get_workflow", "description": "Get one workflow graph"},
+    {"name": "run_workflow", "description": "Start a workflow instance"},
+    {"name": "get_workflow_instance", "description": "Get a workflow instance"},
+    {"name": "list_collections", "description": "List knowledge collections"},
+    {"name": "search_knowledge", "description": "Search the knowledge base"},
+    {"name": "list_users", "description": "List platform users"},
+    {"name": "get_stats", "description": "Platform dashboard statistics"},
 ]
 
 PROVIDERS = [
@@ -199,6 +218,65 @@ PROVIDERS = [
     ("wecom", "wecom", "WeCom / 企业微信", 4, {"corp_id": "", "agent_id": "", "secret": ""}),
     ("dingtalk", "dingtalk", "DingTalk / 钉钉", 5, {"app_key": "", "app_secret": ""}),
 ]
+
+
+MCP_SERVERS = [
+    {"code": "platform-builtin", "name": "Platform Built-in Tools / 平台内置工具",
+     "description": "The platform's own /mcp endpoint and its 12 registered tools.",
+     "transport": "builtin", "endpoint": f"{settings.public_base_url}/mcp", "enabled": 1,
+     "health": "healthy", "tools": BUILTIN_TOOLS, "status": "active", "source": "builtin"},
+    {"code": "thirdparty-http", "name": "Third-party HTTP MCP / 第三方 HTTP 示例",
+     "description": "Example streamable-HTTP MCP server. Set an endpoint and sync to discover tools.",
+     "transport": "http", "endpoint": "http://127.0.0.1:9100/mcp",
+     "enabled": 0, "health": "unknown", "tools": [], "status": "active", "source": "manual"},
+    {"code": "thirdparty-stdio", "name": "Local stdio MCP / 本地命令示例",
+     "description": "Example stdio MCP server launched by a host-side command.",
+     "transport": "stdio",
+     "command": "npx -y @modelcontextprotocol/server-filesystem ./data",
+     "enabled": 0, "health": "manual", "tools": [], "status": "active", "source": "manual"},
+]
+
+
+def ensure_registries(now: str | None = None) -> dict:
+    """Idempotently provision the three independent registries.
+
+    Called on every startup so databases created before MCP / Skills were split
+    (or before model providers existed) are upgraded in place, without touching
+    user data. Returns a small summary for the boot log.
+    """
+    now = now or db.now()
+    created = {"servers": 0, "skills": 0, "providers": 0}
+    for srv in MCP_SERVERS:
+        if db.q1("SELECT id FROM mcp_servers WHERE code=?", (srv["code"],)):
+            continue
+        db.insert("mcp_servers", {**srv, "auth_config": {}, "last_sync_at": now,
+                                  "created_by": "admin", "created_at": now, "updated_at": now})
+        created["servers"] += 1
+    server_map = {r["code"]: r["id"] for r in db.q("SELECT id,code FROM mcp_servers")}
+    for spec in skill_catalog.CATALOG_SPECS:
+        if db.q1("SELECT id FROM mcp_skills WHERE code=?", (spec["code"],)):
+            continue
+        linked = "thirdparty-http" if spec["type"] == "http" else "thirdparty-stdio"
+        tools = [{"name": t["name"], "description": t["description"],
+                  "inputSchema": {"type": "object", "properties": {}}} for t in spec["tools"]]
+        db.insert("mcp_skills", {
+            "code": spec["code"], "name": spec["name"], "type": spec["type"],
+            "endpoint": spec.get("endpoint"), "command": spec.get("command"),
+            "enabled": 1, "auth_config": {}, "tools": tools,
+            "health": "unknown", "status": "installed", "version": spec["version"],
+            "source": "catalog", "description": spec["description"],
+            "manifest": {"schema": "ailp.mcp.skill/1", "capabilities": spec["capabilities"]},
+            "server_id": server_map.get(linked), "installed_at": now,
+            "created_at": now, "updated_at": now,
+        })
+        created["skills"] += 1
+    for provider in model_providers.SEED_ROWS:
+        if db.q1("SELECT id FROM ai_providers WHERE code=?", (provider["code"],)):
+            continue
+        db.insert("ai_providers", {**provider, "api_key": "", "config": {},
+                                   "created_at": now, "updated_at": now})
+        created["providers"] += 1
+    return created
 
 
 def seed_if_empty() -> bool:
@@ -306,32 +384,7 @@ def seed_if_empty() -> bool:
         db.insert("kb_documents", {"collection_id": coll[code], "title": title, "content": content,
                                    "source": "seed", "status": "indexed", "chunks": [], "created_at": now})
 
-    db.insert("mcp_skills", {
-        "code": "platform-builtin", "name": "Platform Built-in Tools / 平台内置工具",
-        "type": "builtin", "endpoint": f"{settings.public_base_url}/mcp", "enabled": 1,
-        "tools": [
-            {"name": "list_forms", "description": "List all form definitions"},
-            {"name": "get_form", "description": "Get one form definition by code"},
-            {"name": "submit_form", "description": "Submit data to a published form"},
-            {"name": "list_workflows", "description": "List workflow definitions"},
-            {"name": "run_workflow", "description": "Start a workflow instance"},
-            {"name": "search_knowledge", "description": "Search the knowledge base"},
-            {"name": "query_records", "description": "Query form submissions"},
-            {"name": "list_users", "description": "List platform users"},
-            {"name": "get_stats", "description": "Platform dashboard statistics"},
-        ],
-        "health": "healthy", "last_sync_at": now, "created_at": now,
-    })
-    db.insert("mcp_skills", {
-        "code": "thirdparty-http", "name": "Third-party HTTP MCP (example) / 第三方示例",
-        "type": "http", "endpoint": "http://127.0.0.1:9100/mcp", "enabled": 0,
-        "tools": [], "health": "unknown", "created_at": now,
-    })
-    db.insert("mcp_skills", {
-        "code": "thirdparty-stdio", "name": "Local stdio MCP (example) / 本地命令示例",
-        "type": "stdio", "command": "npx -y @modelcontextprotocol/server-filesystem ./data", "enabled": 0,
-        "tools": [], "health": "unknown", "created_at": now,
-    })
+    ensure_registries(now)
 
     for a in AGENTS:
         db.insert("agents", {**a, "status": "active", "created_by": "admin",

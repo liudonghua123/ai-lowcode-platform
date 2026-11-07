@@ -24,9 +24,11 @@ Vite 开发服务器把 `/api` 和 `/mcp` 代理到 `http://127.0.0.1:8000`。�
 | `/` | 总览 | 实时统计、活动图表、快捷操作、近期运行与审计动态 |
 | `/forms` | 表单设计器 | 字段面板、拖拽排序画布、属性编辑器、实时预览、提交记录 |
 | `/workflows` | 流程编排 | 可拖拽 DAG 画布、贝塞尔连线、连接模式、节点配置、校验/运行、实例日志 |
-| `/knowledge` | 知识库 | 集合、文档、分块、BM25 检索测试与上下文拼装 |
-| `/agents` | AI 智能体 | 带工具调用步骤与来源引用的对话、智能体配置、运行时信息、工具目录 |
-| `/mcp` | MCP 技能 | 平台工具目录、可安装技能目录、安装/启用/禁用/卸载、可编辑文件管理器（查看/新建/更新/删除/重载）、含统计图表与筛选/CSV 导出的调用日记、同步、REST 工具调用 |
+| `/knowledge` | 知识库 | 集合、文档、分块、BM25 检索测试与上下文拼装、多格式拖拽上传（Office/PDF/Markdown 等）含解析状态与即时索引 |
+| `/agents` | AI 智能体 | 带工具调用步骤与来源引用的对话、智能体配置（知识库/技能/MCP 服务/工作流搜索式绑定）、运行时信息、工具目录 |
+| `/mcp` | MCP 服务 | 独立服务注册表、传输/认证配置、探测/同步工具发现、启用/禁用、按服务调用、平台工具目录，以及调用日记看板（统计/图表/筛选/CSV 导出）与 REST 工具调用 |
+| `/skills` | 技能 | 可安装目录、安装/启用/禁用/卸载/重装、可编辑文件管理器（查看/新建/更新/删除/重载）、可选关联 MCP 服务、同步 |
+| `/models` | AI 模型服务 | 六类模型（llm/asr/tts/embedding/rerank/vision）、配置 CRUD、每类默认项、密钥只写脱敏、连通性测试、运行时元数据 |
 | `/rbac` | 用户与角色 | 用户/角色 CRUD、重置密码、角色×权限矩阵 |
 | `/auth` | 认证配置 | SSO Provider 配置、全局/按角色/按用户 MFA 策略 |
 | `/audit` | 审计日志 | 可筛选日志表格 + JSON 详情查看 |
@@ -46,11 +48,11 @@ src/
                            table.tsx
   components/layout/       AppShell.tsx (侧边栏、顶栏、主题/语言切换、用户菜单)
   components/              PageHeader.tsx, Charts.tsx (SVG 图表、统计卡片、环形图)
-  i18n/                    locales.ts (每种语言 496 个叶子键), index.tsx (provider + t())
+  i18n/                    locales.ts (每种语言 635 个叶子键), index.tsx (provider + t())
   theme/ThemeProvider.tsx  system/light/dark，监听 prefers-color-scheme
   store/AppContext.tsx     session、/meta/bootstrap 目录、can(permission)
   lib/                     api.ts (fetch 客户端 + 401 处理), utils.ts, webauthn.ts
-  pages/                   12 个页面模块
+  pages/                   14 个页面模块
   types.ts                 共享 TypeScript 模型
 ```
 

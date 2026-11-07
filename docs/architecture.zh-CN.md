@@ -12,7 +12,7 @@
 
 ## 1. 目的与范围
 
-本文档描述 AI 低代码平台的**已落地架构**：一套前后端分离的全栈系统，提供可视化表单设计、可视化 DAG 流程编排、版本化 REST API、带第三方技能注册的 MCP 服务、基于知识库的 AI 查询/操作智能体、RBAC、五种 SSO 协议，以及可按角色/用户配置的多因子认证。
+本文档描述 AI 低代码平台的**已落地架构**：一套前后端分离的全栈系统，提供可视化表单设计、可视化 DAG 流程编排、版本化 REST API、**MCP 服务与技能两套独立注册表**、多类别 AI 模型配置、多格式知识库上传、带声明式资源绑定的基于知识库的 AI 查询/操作智能体、RBAC、五种 SSO 协议，以及可按角色/用户配置的多因子认证。
 
 **范围内**：系统上下文、容器视图、前后端组件、运行时流程、数据流、部署拓扑、横切关注点、质量属性与演进边界。
 
@@ -28,7 +28,7 @@
 | 界面风格一致，i18n 中英文（默认英文）、system/light/dark 主题 | 原生移动应用 |
 | 单端口部署，运维简单 | 开箱即用的水平扩展 / 高可用 |
 
-**约束**：Python 3.11+、Node 18+、`uv`、`pnpm`；SQLite 标准库（WAL）；`fastmcp` 4.x streamable HTTP；MIT 协议；界面禁用 emoji（仅 SVG）。
+**约束**：Python 3.11+、Node 18+、`uv`、`pnpm`；SQLite 标准库（WAL）；`fastmcp` 4.x streamable HTTP；`python-multipart` 处理上传；纯标准库文档解析，可选 `pdftotext` / `tesseract`；MIT 协议；界面禁用 emoji（仅 SVG）。
 
 ## 3. 架构原则
 
@@ -63,13 +63,13 @@ flowchart LR
         SPA[Vite SPA<br/>React 18 · TS · HashRouter]
     end
     subgraph Process["uvicorn :8000（FastAPI）"]
-        API["REST 层<br/>/api/v1 · 9 个 router"]
+        API["REST 层<br/>/api/v1 · 13 个 router"]
         MCPS["MCP 服务<br/>/mcp · fastmcp + 内置回退"]
-        SVC["服务层<br/>workflow_engine · rag · llm<br/>mcp_tools · sso"]
+        SVC["服务层<br/>workflow_engine · rag · llm<br/>mcp_tools · mcp_servers<br/>model_providers · documents"]
         SEC["安全层<br/>JWT · PBKDF2 · TOTP<br/>WebAuthn · RBAC"]
         HOST["SPA 静态托管<br/>frontend/dist 回退"]
     end
-    DB[(SQLite<br/>WAL · 19 张表)]
+    DB[(SQLite<br/>WAL · 21 张表)]
     FS[("dist/ 静态资源")]
 
     SPA -->|JSON + Bearer| API
@@ -86,7 +86,7 @@ flowchart LR
 | 容器 | 职责 | 技术 |
 | --- | --- | --- |
 | SPA | 全部 UI、可视化设计器、i18n、主题 | Vite 6、React 18、TypeScript、Tailwind 3、shadcn/ui 风格组件、lucide-react |
-| REST 层 | 80 个 OpenAPI 路径、Pydantic 模型、错误语义 | FastAPI 0.128+、`APIRouter`、`Depends` |
+| REST 层 | 96 个 OpenAPI 路径、Pydantic 模型、错误语义 | FastAPI 0.128+、`APIRouter`、`Depends` |
 | MCP 服务 | `initialize` / `tools/list` / `tools/call` / resources / prompts | `fastmcp` 4.1.6 `http_app(path="/mcp")` + 内置 JSON-RPC 回退 |
 | 服务层 | 纯业务逻辑，不感知 HTTP | `app/services/` 下 Python 模块 |
 | 安全层 | 身份、令牌、密码/MFA、权限校验 | 标准库 `hashlib`/`hmac`、HS256 JWT、`contextvars` |
@@ -104,9 +104,13 @@ app/
 ├── deps.py            get_current_user、has_permission、require()、audit()
 ├── seed.py            首次启动的确定性演示数据
 ├── mcp_server.py      fastmcp 工具 + 无依赖 JSON-RPC 回退
-├── routers/           auth · rbac · forms · workflows · knowledge · agents · mcp · audit · meta
+├── routers/           auth · rbac · forms · workflows · knowledge · agents · mcp
+│                      mcp_servers · skills · ai_providers · audit · meta
 └── services/
-    ├── mcp_tools.py        ★ 能力注册表（12 工具、Schema、权限）
+    ├── mcp_tools.py        ★ 能力注册表（12 工具、Schema、权限、Agent 工具域）
+    ├── mcp_servers.py      MCP 服务注册表、探测/同步、外部工具桥接
+    ├── model_providers.py  6 类 AI 模型配置、密钥脱敏、effective_llm()
+    ├── documents.py        纯标准库多格式解析（OOXML/PDF/OCR/文本）
     ├── workflow_engine.py  DAG 校验（环检测）、条件路由、执行
     ├── rag.py              中英混合分词、分块、BM25、上下文拼装
     ├── llm.py              3 个后端、ReAct 编排、有据回答
@@ -127,7 +131,7 @@ MCP 请求走并行路径：纯 ASGI 的 `MCPAuthASGIMiddleware` 解析可选 `A
 ```
 main.tsx → HashRouter · ThemeProvider · I18nProvider · ToastProvider · AppContext
          → App.tsx（鉴权守卫、Splash）→ AppShell（侧栏/顶栏/用户菜单）
-         → 12 个页面模块
+         → 14 个页面模块
 ```
 
 `lib/api.ts` 封装 `fetch`，统一注入 JWT、`ApiError` 与全局 `401 → 登出` 事件。`AppContext` 登录后一次性加载 `/auth/me` + `/meta/bootstrap`，并暴露 `can(permission)`。
@@ -195,9 +199,12 @@ sequenceDiagram
 | --- | --- | --- |
 | 表单定义 | 设计器 → `PUT /forms/{id}` → JSON `schema` 列 | `forms`, `form_submissions` |
 | 流程画布 | 画布 → `PUT /workflows/{id}` → JSON `graph` 列 | `workflows`, `workflow_instances` |
-| 知识库 | 创建文档 → `rag.index_document()` → JSON `chunks` | `kb_collections`, `kb_documents` |
-| 智能体会话 | 对话 → `run_agent()` → 会话轮次 | `conversations`, `audit_logs` |
-| MCP 技能注册 | 外部服务配置 → 同步 → 工具缓存 | `mcp_skills` |
+| 知识库（文本） | 创建文档 → `rag.index_document()` → JSON `chunks` | `kb_collections`, `kb_documents` |
+| 知识库（上传） | Multipart → `documents.parse()` → `rag.index_document()` → 文件元数据 + 分块 | `kb_documents` |
+| 智能体会话 | 对话 → `run_agent()`（按绑定收窄工具域）→ 会话轮次 | `conversations`, `audit_logs` |
+| MCP 服务注册 | 服务配置 → 探测/同步 → 声明的工具 | `mcp_servers` |
+| 技能注册 | 安装 → 生命周期 → 可编辑文件 → 可选 `server_id` 关联 | `mcp_skills`, `mcp_skill_files` |
+| AI 模型服务 | 类别默认项 → `effective_llm()` → 运行时覆盖 | `ai_providers` |
 | 配置 | `.env` → `Settings` → 运行时覆盖 | `settings` |
 
 复杂结构统一以 JSON 文本列存储，由 `db._enc/_dec` 与 `db.loads()` 透明序列化。
@@ -216,13 +223,13 @@ SPA catch-all 无条件注册，并在每次请求时解析 `dist/index.html`，
 
 | 关注点 | 实现 |
 | --- | --- |
-| i18n | 每种语言 496 个叶子键，默认 `en`，`localStorage` 持久化，同步 `<html lang>`，缺失回退英文 |
+| i18n | 每种语言 635 个叶子键，默认 `en`，`localStorage` 持久化，同步 `<html lang>`，缺失回退英文 |
 | 主题 | `system`（默认）/ `light` / `dark`，监听 `prefers-color-scheme`，HSL CSS 变量，`meta[theme-color]` |
 | 审计 | 所有写操作 → `audit_logs(actor, action, resource, detail, ip, level, created_at)` |
 | 配置 | `python-dotenv` → 冻结 `Settings`；`settings` 表支持运行时覆盖 |
 | 错误 | `HTTPException` 401 / 403 / 404 / 422；客户端 `ApiError`；401 触发全局登出 |
-| 可观测 | `/api/v1/meta/health`、`/meta/stats`、`/agents/meta/runtime`、`/mcp/status` |
-| 测试 | `backend/tests/smoke.py` 47 项端到端断言；`pnpm typecheck`、`pnpm build`、`pnpm check:i18n`、`ruff check` |
+| 可观测 | `/api/v1/meta/health`、`/meta/stats`、`/agents/meta/runtime`、`/agents/meta/bindings`、`/mcp/status`、`/mcp/calls/stats`、`/knowledge/stats` |
+| 测试 | `backend/tests/smoke.py` 110 项端到端断言；`pnpm typecheck`、`pnpm build`、`pnpm check:i18n`、`ruff check` |
 
 ## 11. 技术决策摘要
 
@@ -234,6 +241,8 @@ SPA catch-all 无条件注册，并在每次请求时解析 `dist/index.html`，
 | SQLite + 进程内 BM25 | 无外部服务，支持中英混合检索 | [0004](adr/0004-sqlite-and-local-bm25.md) |
 | fastmcp 主通道 + 内置回退、ASGI 鉴权绑定 | 兼顾 MCP 合规与韧性 | [0005](adr/0005-mcp-transport-and-auth.md) |
 | RBAC + 策略化 MFA + demo SSO | 不依赖外部 IdP 也具备完整认证面 | [0006](adr/0006-rbac-mfa-and-sso.md) |
+| 技能生命周期、可编辑文件与调用日记 | 可审计的第三方能力管理 | [0007](adr/0007-mcp-skill-lifecycle-and-journal.md) |
+| MCP 服务/技能拆分、AI 模型服务、知识库上传、智能体绑定 | 独立注册表与可配置的模型/知识资源 | [0008](adr/0008-mcp-skills-split-model-providers-and-knowledge-upload.md) |
 
 ## 12. 质量属性与取舍
 
@@ -243,7 +252,7 @@ SPA catch-all 无条件注册，并在每次请求时解析 `dist/index.html`，
 | 安全性 | HS256 JWT、PBKDF2、逐路由 RBAC、审计 | RS256 / 密钥轮换、限流、密钥管理 |
 | AI 准确性 | 确定性 mock + BM25 有据回答 | 真实 LLM、向量库、重排序 |
 | 可扩展性 | 进程内索引、同步执行 | 流程任务队列、外部向量库 |
-| 可测试性 | 47 项冒烟断言，无需网络 | 契约测试、压力测试、MCP 一致性套件 |
+| 可测试性 | 110 项冒烟断言，无需网络 | 契约测试、压力测试、MCP 一致性套件 |
 | 可运维性 | health / stats / runtime 端点 | 结构化日志、指标、链路追踪 |
 
 ## 13. 已知限制
@@ -260,9 +269,13 @@ SPA catch-all 无条件注册，并在每次请求时解析 `dist/index.html`，
 | --- | --- | --- |
 | 可视化表单设计 | 元数据驱动设计器 | `routers/forms.py`, `pages/Forms.tsx` |
 | 可视化流程编排 | DAG 校验器 + 执行引擎 | `services/workflow_engine.py`, `pages/Workflows.tsx` |
-| REST API | 版本化路由 | `routers/*.py`（107 个路由装饰器 → 80 个 OpenAPI 路径） |
-| MCP + 第三方 skills | 双传输 MCP + 注册表 | `mcp_server.py`, `routers/mcp.py` |
-| AI 查询/操作智能体 | ReAct + 工具注册表 + RAG | `services/llm.py`, `services/rag.py` |
-| 知识库 | BM25 + 分块 | `services/rag.py`, `routers/knowledge.py` |
+| REST API | 版本化路由 | `routers/*.py`（131 个路由装饰器 → 96 个 OpenAPI 路径） |
+| MCP 传输 + 工具注册表 | 双传输 MCP + 单一注册表 | `mcp_server.py`, `routers/mcp.py`, `services/mcp_tools.py` |
+| MCP 服务（独立） | CRUD、探测/同步、声明工具、远程调用 | `routers/mcp_servers.py`, `services/mcp_servers.py`, `mcp_servers` |
+| 技能（独立） | 生命周期、目录、可编辑文件、`server_id` 关联 | `routers/skills.py`, `services/skill_*.py`, `mcp_skills` |
+| AI 查询/操作智能体 | ReAct + 绑定工具域 + RAG | `services/llm.py`, `services/rag.py` |
+| 智能体资源绑定 | `GET /agents/meta/bindings`、创建/更新时清理失效 id | `routers/agents.py`, `pages/Agents.tsx` |
+| AI 模型服务 | 6 个类别、密钥只写、运行时 LLM 覆盖 | `routers/ai_providers.py`, `services/model_providers.py`, `ai_providers` |
+| 知识库 | BM25 + 分块 + 多格式上传 | `services/rag.py`, `services/documents.py`, `routers/knowledge.py` |
 | RBAC / SSO / MFA | 声明式守卫 + 适配器 | `deps.py`, `security.py`, `services/sso.py` |
 | i18n / 主题 | Provider + bootstrap | `i18n/`, `theme/`, `routers/meta.py` |

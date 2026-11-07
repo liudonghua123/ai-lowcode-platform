@@ -1,6 +1,6 @@
 # AI 低代码平台
 
-> 一套 AI 原生的全栈低代码平台：可视化**表单设计**、可视化 **DAG 流程编排**、完整的 **RESTful 接口**、**MCP**（streamable HTTP，支持第三方 skills）、基于知识库的 **AI 查询/操作智能体**、完整的 **RBAC**、**CAS / OAuth2 / OIDC / 企业微信 / 钉钉 SSO**，以及可按角色/用户配置的 **Passkey + OTP 多因子认证**。
+> 一套 AI 原生的全栈低代码平台：可视化**表单设计**、可视化 **DAG 流程编排**、完整的 **RESTful 接口**、**MCP**（streamable HTTP，**MCP 服务与技能各自独立管理**）、**多类别 AI 模型服务**（LLM/ASR/TTS/Embedding/Rerank/Vision）、**多格式知识库上传**（Office/PDF/Markdown 等）、带声明式资源绑定的基于知识库的 **AI 查询/操作智能体**、完整的 **RBAC**、**CAS / OAuth2 / OIDC / 企业微信 / 钉钉 SSO**，以及可按角色/用户配置的 **Passkey + OTP 多因子认证**。
 
 前端：**Vite + React + TypeScript + shadcn/ui 设计体系** · 后端：**uv + python-dotenv + FastAPI + fastmcp + AgentScope** · **MIT 协议** · **i18n 中英文（默认英文）** · **主题 system / light / dark**。
 
@@ -18,9 +18,13 @@ English: [README.md](README.md) · 后端：[backend/README.zh-CN.md](backend/RE
 | --- | --- |
 | ![流程编排](docs/screenshots/workflow-studio.png) | ![AI 智能体](docs/screenshots/ai-agents.png) |
 
-| 知识库检索 | MCP 技能 | 用户与角色 | 深色主题 |
+| 知识库检索 | MCP 服务 | 技能 | 深色主题 |
 | --- | --- | --- | --- |
-| ![知识库](docs/screenshots/knowledge-rag.png) | ![MCP 技能](docs/screenshots/mcp-skills.png) | ![RBAC](docs/screenshots/rbac.png) | ![深色主题](docs/screenshots/dashboard-dark.png) |
+| ![知识库](docs/screenshots/knowledge-rag.png) | ![MCP 服务](docs/screenshots/mcp-servers.png) | ![技能](docs/screenshots/skills.png) | ![深色主题](docs/screenshots/dashboard-dark.png) |
+
+| AI 模型服务 | 知识库上传 | 智能体绑定 | 用户与角色 |
+| --- | --- | --- | --- |
+| ![AI 模型服务](docs/screenshots/model-providers.png) | ![知识库上传](docs/screenshots/knowledge-upload.png) | ![智能体绑定](docs/screenshots/agent-bindings.png) | ![RBAC](docs/screenshots/rbac.png) |
 
 ---
 
@@ -30,10 +34,14 @@ English: [README.md](README.md) · 后端：[backend/README.zh-CN.md](backend/RE
 | --- | --- |
 | **可视化表单设计** | 15 种字段类型、点击添加、拖拽排序、字段属性编辑（名称/键/必填/占位/选项/宽度/校验）、实时预览与真实校验、草稿/发布/归档、提交记录 |
 | **可视化流程编排** | 可拖拽 DAG 画布 + 贝塞尔连线，9 种节点（开始/结束/表单/条件/审批/AI/知识/HTTP/通知），连线模式、条件分支、节点配置面板、缩放、自动布局、图校验（环检测）、执行引擎、实例日志 |
-| **RESTful 接口** | `/api/v1` 下约 70 个接口，Pydantic 请求/响应模型，自动生成 `/docs`，统一错误码，所有写操作记录审计日志 |
-| **MCP** | 基于 `fastmcp` 的真实 streamable HTTP 服务 `/mcp`（initialize / tools/list / tools/call / resources / prompts），12 个平台工具，并内置零依赖 JSON-RPC 降级实现；第三方 `http`/`sse`/`stdio` 技能支持可安装目录、安装/启用/禁用/卸载/重装、可编辑技能文件与磁盘镜像、同步工具目录、REST 调用，以及含统计图表与 CSV 导出的**调用日记** |
-| **AI 智能体** | `query` / `act` / `hybrid` 三类智能体，兼容 AgentScope 的 ReAct 工具循环，RAG  grounding、会话持久化、来源引用、工具调用步骤可见；`mock` / `openai-compatible` / `agentscope` 三种后端（默认离线可用） |
-| **知识库** | 集合、文档、自动分块、中英混合 BM25 检索（单字 + 双字 gram）、上下文组装、检索测试台 |
+| **RESTful 接口** | `/api/v1` 下 96 个 OpenAPI 路径（131 个路由装饰器），Pydantic 请求/响应模型，自动生成 `/docs`，统一错误码，所有写操作记录审计日志 |
+| **MCP** | 基于 `fastmcp` 的真实 streamable HTTP 服务 `/mcp`（initialize / tools/list / tools/call / resources / prompts），12 个平台工具外加 `call_remote_tool` 桥接工具，并内置零依赖 JSON-RPC 降级实现 |
+| **MCP 服务** | 独立的 `/mcp/servers` 注册表：`http`/`sse`/`stdio` 连接 CRUD、认证配置、探测/同步工具发现、健康与状态、启用/禁用、按服务调用工具 |
+| **技能** | 独立的 `/skills` 注册表：可安装目录、安装/启用/禁用/卸载/重装、可编辑技能文件与磁盘镜像、可选 `server_id` 关联 MCP 服务、关联服务同步 |
+| **AI 模型服务** | `/ai/providers` 配置 `llm` / `asr` / `tts` / `embedding` / `rerank` / `vision` 六类模型；每类一个默认项、API Key 只写（读取时脱敏）、连通性测试，`llm` 默认项在运行时覆盖 `LLM_*` 环境变量 |
+| **AI 智能体** | `query` / `act` / `hybrid` 三类智能体，兼容 AgentScope 的 ReAct 工具循环，RAG grounding、会话持久化、来源引用、工具调用步骤可见；`GET /agents/meta/bindings` 让创建时可在同一搜索式对话框中绑定知识库、技能、MCP 服务与工作流（保存时清理失效 id、运行时收窄工具域）；`mock` / `openai-compatible` / `agentscope` 三种后端（默认离线可用） |
+| **知识库** | 集合、文档、自动分块、中英混合 BM25 检索（单字 + 双字 gram）、上下文组装、检索测试台，以及**多格式上传**——Markdown/TXT/CSV/JSON/YAML/HTML/XML、PDF、Word/Excel/PowerPoint（OOXML）、OpenDocument、EPUB、RTF、图片（OCR）等，上传即解析并立即索引 |
+| **调用日记** | 记录 MCP / REST / Agent / internal 每次调用的参数、结果预览、状态、错误、耗时与目标；提供统计、图表、筛选与 CSV 导出 |
 | **RBAC** | 用户、角色、25 项细粒度权限、角色×权限矩阵、接口级 `Depends(require("x:y"))` 校验、内置 admin/developer/operator/viewer 角色 |
 | **SSO** | CAS、OAuth2、OIDC（discovery + ID Token）、企业微信、钉钉，均可在界面配置；未配置凭据时进入明确标注的演示模式，完整走通跳转 → 回调 → 自动建号 |
 | **MFA** | TOTP/OTP（RFC 6238 真实 6 位校验 + otpauth 二维码）、WebAuthn/Passkey 注册与认证，**全局 / 按角色 / 按用户**强制策略、登录时引导注册 |
@@ -54,9 +62,12 @@ ai-lowcode-platform/
 │   │   ├── deps.py            认证 / RBAC 依赖、审计工具
 │   │   ├── seed.py            确定性演示数据
 │   │   ├── mcp_server.py      fastmcp 工具 + 内置 JSON-RPC 降级
-│   │   ├── routers/           auth, rbac, forms, workflows, knowledge, agents, mcp, audit, meta
-│   │   └── services/          workflow_engine, rag, llm, mcp_tools, mcp_journal, skill_catalog, skill_files, sso
-│   └── tests/smoke.py         47 项端到端 API 断言
+│   │   ├── routers/           auth, rbac, forms, workflows, knowledge, agents, mcp,
+│   │   │                      mcp_servers, skills, ai_providers, audit, meta
+│   │   └── services/          workflow_engine, rag, llm, mcp_tools, mcp_servers,
+│   │                          model_providers, documents, mcp_journal, skill_catalog,
+│   │                          skill_files, sso
+│   └── tests/smoke.py         110 项端到端 API 断言
 └── frontend/                   Vite + React + TS 单页应用
     └── src/
         ├── components/ui/     shadcn 风格基础组件、对话框、Toast、表格
@@ -65,7 +76,7 @@ ai-lowcode-platform/
         ├── theme/             ThemeProvider（system/light/dark）
         ├── store/             AppContext（会话、元数据字典、权限）
         ├── lib/               api client、工具函数、WebAuthn 辅助
-        └── pages/             11 个页面（含表单设计器与流程画布）
+        └── pages/             14 个页面模块（含 MCP 服务、技能与 AI 模型页）
 ```
 
 **一份注册表，三处复用。** `services/mcp_tools.py` 统一声明每个平台能力的名称、JSON Schema 与所需权限。MCP 服务、AI 智能体的工具循环、REST `/mcp/invoke` 调用同一组处理函数——因此智能体是**真的**能提交表单、运行流程，而不是模拟对话。
@@ -107,15 +118,17 @@ chmod +x scripts/*.sh
 
 ---
 
-## 五分钟体验
+## 功能体验
 
 1. **表单设计** → 打开 `leave_request` → 在右侧属性面板修改字段 → 切到 **Preview** → 填写并提交 → 查看提交记录。
 2. **流程编排** → 打开 `leave_approval` → 拖动节点、用 **Connect** 连线 → **Validate** → **Run** 输入 `{"days": 5}` → 观察条件分支（true → 总监审批）。
 3. **知识库** → 检索测试输入 `请假制度 leave policy` → 查看 BM25 命中与组装上下文。
 4. **AI 智能体** → 打开 *AI Copilot* → 询问 `List all forms and show platform statistics` → 查看真实工具调用与结果；再问 `What is the leave policy?` 得到带引用的答案。
-5. **MCP 技能** → 从**技能目录**安装技能 → **查看文件**并编辑 `config.json` → 禁用 / 重装 → 打开**调用日记**查看记录、筛选并导出 CSV。
-6. **认证设置** → 启用某个 SSO 提供方、修改 MFA 策略（对某角色强制 OTP），再到 **设置** 页扫码绑定 OTP 或添加通行密钥。
-7. 顶栏切换 **EN/中文** 与主题（system/light/dark）。
+5. **MCP 服务与技能** → 在 `/mcp` 注册服务并**同步**工具 → 在 `/skills` 从**技能目录**安装技能、编辑 `config.json`、禁用 / 重装 → 打开**调用日记**筛选并导出 CSV。
+6. **AI 模型** → `/models` 切换类别页签、把某个 `llm` 配置设为默认（运行时覆盖 `LLM_*`）并执行连通性测试。
+7. **知识库上传** → 把 `.docx` / `.xlsx` / `.pdf` / `.md` 文件拖入上传对话框，查看解析状态与即时 BM25 索引。
+8. **智能体绑定** → 创建智能体，在同一搜索式对话框中绑定知识库、技能、MCP 服务与工作流；失效 id 自动清理。
+9. **认证与语言** → 启用 SSO 提供方、对某角色强制 OTP、在 **设置** 页绑定因子，再切换 **EN/中文** 与主题（system/light/dark）。
 
 支持深链接：`/#/forms?form=leave_request`、`/#/workflows?workflow=leave_approval`、`/#/agents?agent=general_copilot`。
 
@@ -126,13 +139,14 @@ chmod +x scripts/*.sh
 | 接口 | 用途 |
 | --- | --- |
 | `POST /api/v1/auth/login`、`/auth/mfa/verify`、`/auth/otp/*`、`/auth/passkey/*`、`/auth/sso/*` | 认证、MFA、SSO |
-| `/api/v1/forms`、`/workflows`、`/knowledge`、`/agents`、`/mcp`、`/rbac`、`/audit`、`/settings`、`/meta` | 资源 CRUD + 动作接口 |
+| `/api/v1/forms`、`/workflows`、`/knowledge`、`/agents`、`/mcp`、`/mcp/servers`、`/skills`、`/ai/providers`、`/rbac`、`/audit`、`/settings`、`/meta` | 资源 CRUD + 动作接口 |
 | `POST /api/v1/workflows/{id}/validate`、`/run` | DAG 校验与执行 |
-| `POST /api/v1/knowledge/search`、`/agents/{id}/chat` | RAG 检索与 ReAct 智能体对话 |
+| `POST /api/v1/knowledge/search`、`/knowledge/upload`，`GET /knowledge/formats` | RAG 检索、多格式上传、格式清单 |
+| `POST /api/v1/agents/{id}/chat`，`GET /agents/meta/bindings` | ReAct 智能体对话与可绑定资源 |
 | `GET /api/v1/meta/bootstrap` | 一次返回全部 UI 字典（字段类型、节点类型、权限、提供方、运行时） |
 | `POST /mcp` | MCP streamable HTTP（initialize / tools/list / tools/call / resources / prompts） |
 
-MCP 工具：`list_forms`、`get_form`、`submit_form`、`query_records`、`list_workflows`、`get_workflow`、`run_workflow`、`get_workflow_instance`、`list_collections`、`search_knowledge`、`list_users`、`get_stats`。
+MCP 工具：`list_forms`、`get_form`、`submit_form`、`query_records`、`list_workflows`、`get_workflow`、`run_workflow`、`get_workflow_instance`、`list_collections`、`search_knowledge`、`list_users`、`get_stats`。`call_remote_tool` 桥接工具把调用转发给已启用 MCP 服务声明的工具。
 
 任意 MCP 客户端可连接 `http://localhost:8000/mcp`；可选携带 `Authorization: Bearer <token>` 使工具调用受 RBAC 约束。
 
@@ -147,11 +161,12 @@ MCP 工具：`list_forms`、`get_form`、`submit_form`、`query_records`、`list
 | `SECRET_KEY` | 开发用 | **生产必须修改**（JWT HS256 签名） |
 | `DB_PATH` | `./data/platform.db` | SQLite 文件 |
 | `LLM_PROVIDER` | `mock` | `mock`（离线）/ `openai-compatible` / `agentscope` |
-| `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL` | — | 仅真实模型调用需要 |
+| `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL` | — | 仅真实模型调用需要；`/ai/providers` 中设为默认的 `llm` 配置会在运行时覆盖这些变量 |
+| `ASR_*`、`TTS_*`、`EMBEDDING_*`、`RERANK_*` | — | 非 LLM 模型类别的启动默认值；运行时配置以 `/ai/providers` 为准 |
 | `MFA_REQUIRED`、`MFA_ENFORCED_ROLES`、`MFA_ENFORCED_USERS` | 关闭 | MFA 策略（也可在界面修改） |
 | `PASSKEY_RP_ID`、`PASSKEY_ORIGIN` | localhost | WebAuthn relying party |
 | `CAS_*`、`OAUTH2_*`、`OIDC_*`、`WECOM_*`、`DINGTALK_*` | — | SSO 凭据（也可在界面配置） |
-| `MCP_EXTERNAL_SERVERS` | — | 可选第三方 MCP 端点 |
+| `MCP_EXTERNAL_SERVERS` | — | 遗留提示；第三方 MCP 连接现通过 `/mcp/servers` 注册 |
 | `CORS_ORIGINS` | localhost:5173 | 前端来源，同时用于 SSO 回调跳转 |
 
 前端配置见 `frontend/.env.example`（`VITE_API_BASE=/api/v1`，由 Vite 代理到 `:8000`）。
@@ -160,7 +175,7 @@ MCP 工具：`list_forms`、`get_form`、`submit_form`、`query_records`、`list
 
 ## 国际化与主题
 
-- **默认英文**，顶栏可切换中文（持久化到 `localStorage`）。全部文案位于 `frontend/src/i18n/locales.ts`（每种语言 496 个叶子键，已校验无缺失）。
+- **默认英文**，顶栏可切换中文（持久化到 `localStorage`）。全部文案位于 `frontend/src/i18n/locales.ts`（每种语言 635 个叶子键，已校验无缺失）。
 - **主题默认 `system`**，跟随 `prefers-color-scheme`，也可强制 light/dark。设计变量为 `frontend/src/index.css` 中的 HSL CSS 变量，遵循 shadcn/ui 约定。
 - 平台默认值（`default_locale`、`default_theme` 等）同时通过 `/api/v1/settings` 存于服务端。
 
@@ -175,10 +190,12 @@ MCP 工具：`list_forms`、`get_form`、`submit_form`、`query_records`、`list
 | [系统架构设计](docs/architecture.zh-CN.md)（[English](docs/architecture.md)） | C4 上下文/容器/组件视图、请求管线、运行时流程、部署、质量属性、需求可追溯 |
 | [AI 系统设计](docs/ai-design.zh-CN.md)（[English](docs/ai-design.md)） | LLM 运行时与降级、ReAct 编排、统一工具注册表、RAG/BM25、MCP 暴露、Prompt 规范、安全边界、生产升级路径 |
 | [安全架构](docs/security.md) | JWT/PBKDF2/TOTP/WebAuthn、25 项 RBAC 权限、SSO、MFA 策略、审计、威胁模型 |
-| [数据模型](docs/data-model.md) | 19 张表、7 个索引、JSON 列、ER 图、种子数据、惰性迁移 |
-| [REST 与 MCP 接口规范](docs/api-reference.md) | 全部 80 个 OpenAPI 路径、MCP 方法、12 个工具 Schema、调用示例 |
-| [MCP 技能与调用日记](docs/mcp-skills.md) | 技能生命周期、可编辑技能文件、调用日记、来源与权限 |
-| [ADR 索引](docs/adr/README.md) | 7 份已接受的架构决策记录与模板 |
+| [数据模型](docs/data-model.md) | 21 张表、10 个索引、JSON 列、ER 图、种子数据、惰性迁移 |
+| [REST 与 MCP 接口规范](docs/api-reference.md) | 全部 96 个 OpenAPI 路径、MCP 方法、12 个工具 Schema、调用示例 |
+| [MCP 服务、技能与调用日记](docs/mcp-skills.md) | 独立注册表、技能生命周期、可编辑文件、调用日记、来源与权限 |
+| [知识库上传](docs/knowledge-upload.md) | 支持格式、解析流程、上传接口与校验 |
+| [AI 模型服务](docs/ai-models.md) | 六类模型、配置 CRUD、密钥只写、默认项与运行时解析 |
+| [ADR 索引](docs/adr/README.md) | 8 份已接受的架构决策记录与模板 |
 
 真实界面截图：[`docs/screenshots/`](docs/screenshots/)。
 
@@ -196,7 +213,7 @@ pnpm typecheck && pnpm build
 pnpm check:i18n                         # 中英文案键一致性
 ```
 
-冒烟测试包含 69 项断言：认证/RBAC（含 403 拒绝）、表单发布/校验/提交、DAG 校验与两条条件分支、RAG 索引、智能体工具循环、MCP 握手/工具列举/调用、SSO 演示建号、MFA 注册、审计日志、SPA 托管与 API 404 处理，以及 MCP 调用日记（记录、统计、CSV 导出、清空）与技能完整生命周期（安装、文件增删查改、路径穿越拒绝、启用/禁用/卸载/重装）。
+冒烟测试包含 110 项断言：认证/RBAC（含 403 拒绝）、表单发布/校验/提交、DAG 校验与两条条件分支、RAG 索引、智能体工具循环、MCP 握手/工具列举/调用、SSO 演示建号、MFA 注册、审计日志、SPA 托管与 API 404 处理，以及 MCP 调用日记（记录、统计、CSV 导出、清空）与技能完整生命周期（安装、文件增删查改、路径穿越拒绝、启用/禁用/卸载/重装），外加拆分后的 MCP 服务/技能注册表、AI 模型服务、多格式知识库上传与智能体资源绑定。
 
 ---
 

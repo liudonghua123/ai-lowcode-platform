@@ -28,7 +28,8 @@ def record(*, method: str, tool: str | None = None, source: str = "internal",
            transport: str | None = None, actor: str | None = None,
            arguments: dict | None = None, status: str = "success",
            error: str | None = None, result: object = None,
-           duration_ms: int = 0, request_id: str | None = None) -> int:
+           duration_ms: int = 0, request_id: str | None = None,
+           target: str | None = None) -> int:
     """Persist one journal entry. Returns the row id, or 0 on failure."""
     try:
         try:
@@ -46,6 +47,7 @@ def record(*, method: str, tool: str | None = None, source: str = "internal",
             "status": status if status in STATUSES else "error",
             "error": (error or "")[:500] or None,
             "result_preview": _preview(result),
+            "target": target,
             "duration_ms": round(float(duration_ms), 2),
             "created_at": db.now(),
         })

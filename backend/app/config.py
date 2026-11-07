@@ -61,6 +61,21 @@ class Settings:
     agentscope_enabled: bool = _bool("AGENTSCOPE_ENABLED", True)
     rag_top_k: int = int(os.getenv("RAG_TOP_K", "4"))
 
+    # Bootstrap defaults for the other model-service categories. Runtime
+    # configuration lives in the ai_providers table (see services/model_providers).
+    asr_base_url: str = os.getenv("ASR_BASE_URL", "")
+    asr_api_key: str = os.getenv("ASR_API_KEY", "")
+    asr_model: str = os.getenv("ASR_MODEL", "whisper-1")
+    tts_base_url: str = os.getenv("TTS_BASE_URL", "")
+    tts_api_key: str = os.getenv("TTS_API_KEY", "")
+    tts_model: str = os.getenv("TTS_MODEL", "tts-1")
+    embedding_base_url: str = os.getenv("EMBEDDING_BASE_URL", "")
+    embedding_api_key: str = os.getenv("EMBEDDING_API_KEY", "")
+    embedding_model: str = os.getenv("EMBEDDING_MODEL", "bm25-local")
+    rerank_base_url: str = os.getenv("RERANK_BASE_URL", "")
+    rerank_api_key: str = os.getenv("RERANK_API_KEY", "")
+    rerank_model: str = os.getenv("RERANK_MODEL", "none")
+
     mcp_enabled: bool = _bool("MCP_ENABLED", True)
     mcp_stateless: bool = _bool("MCP_STATELESS", True)
     mcp_json_response: bool = _bool("MCP_JSON_RESPONSE", True)

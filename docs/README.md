@@ -11,10 +11,12 @@ This directory contains the platform's **standard design and architecture docume
 | `ARC-001` | [architecture.md](architecture.md) · [中文](architecture.zh-CN.md) | EN / 中文 | C4 context–container–component views, request pipeline, runtime sequences, deployment, quality attributes, traceability |
 | `AI-001` | [ai-design.md](ai-design.md) · [中文](ai-design.zh-CN.md) | EN / 中文 | **AI system design**: LLM runtime, ReAct orchestration, unified tool registry, RAG/BM25, MCP exposure, prompt spec, safety boundary, upgrade path |
 | `SEC-001` | [security.md](security.md) | EN (中文摘要) | Identity/JWT, PBKDF2, TOTP, WebAuthn, MFA policy, 25 RBAC permissions, SSO, audit, threat model, production checklist |
-| `DAT-001` | [data-model.md](data-model.md) | EN (中文摘要) | 19 tables, 7 indexes, JSON columns, ER diagram, data-access helpers, seed data, migration notes |
-| `API-001` | [api-reference.md](api-reference.md) | EN (中文摘要) | REST conventions, all **80 OpenAPI paths**, MCP methods, 12 tool schemas, examples |
-| `MCP-001` | [mcp-skills.md](mcp-skills.md) | EN (中文摘要) | Skill install/enable/disable/uninstall lifecycle, editable skill files, MCP call journal, sources and RBAC |
-| `ADR-*` | [adr/README.md](adr/README.md) | EN | 7 accepted architecture decision records + ADR template and conventions |
+| `DAT-001` | [data-model.md](data-model.md) | EN (中文摘要) | 21 tables, 10 indexes, JSON columns, ER diagram, data-access helpers, seed data, migration notes |
+| `API-001` | [api-reference.md](api-reference.md) | EN (中文摘要) | REST conventions, all **96 OpenAPI paths**, MCP methods, 12 tool schemas, examples |
+| `MCP-001` | [mcp-skills.md](mcp-skills.md) | EN (中文摘要) | Independent MCP server and Skill registries, skill lifecycle, editable files, call journal, sources and RBAC |
+| `KNB-001` | [knowledge-upload.md](knowledge-upload.md) | EN (中文摘要) | Multi-format knowledge upload, parsing pipeline, format catalog, API and validation |
+| `AIM-001` | [ai-models.md](ai-models.md) | EN (中文摘要) | Six AI model categories, provider CRUD, write-only keys, defaults and runtime resolution |
+| `ADR-*` | [adr/README.md](adr/README.md) | EN | 8 accepted architecture decision records + ADR template and conventions |
 | — | [README.md](../README.md) · [中文](../README.zh-CN.md) | EN / 中文 | Project overview, quick start, demo accounts, screenshots |
 | — | [backend/README.md](../backend/README.md) · [中文](../backend/README.zh-CN.md) | EN / 中文 | Backend runbook, endpoints, security, configuration |
 | — | [frontend/README.md](../frontend/README.md) · [中文](../frontend/README.zh-CN.md) | EN / 中文 | Frontend pages, layout, design system, i18n/theme, data flow |
@@ -42,9 +44,9 @@ This directory contains the platform's **standard design and architecture docume
 
 ```bash
 cd backend
-uvx ruff check app                 # code style
-python3.11 tests/smoke.py          # 47 end-to-end assertions
-python3.11 -c "from app.main import app; print(len(app.openapi()['paths']))"   # 67
+python3 -m ruff check app tests # code style
+python3 tests/smoke.py             # 110 end-to-end assertions
+python3 -c "from app.main import app; print(len(app.openapi()['paths']))"      # 96
 
 cd ../frontend
 pnpm typecheck && pnpm build
@@ -53,7 +55,7 @@ pnpm check:i18n                    # en/zh key parity
 
 ## Screenshots / 界面截图
 
-`docs/screenshots/` contains 9 real Chromium headless captures (1920×1080), referenced by both root READMEs:
+`docs/screenshots/` contains 13 real Chromium headless captures (1920×1080), referenced by both root READMEs:
 
 | File | View |
 | --- | --- |
@@ -62,6 +64,10 @@ pnpm check:i18n                    # en/zh key parity
 | `form-designer.png` | Visual form designer |
 | `workflow-studio.png` | DAG workflow canvas |
 | `knowledge-rag.png` | Knowledge base + retrieval test |
+| `knowledge-upload.png` | Multi-format drag-and-drop upload dialog and results |
 | `ai-agents.png` | Agent chat with tool steps |
-| `mcp-skills.png` | MCP tools and third-party skills |
+| `agent-bindings.png` | Agent creation with searchable resource bindings |
+| `mcp-servers.png` | Independent MCP server registry, tools and journal |
+| `skills.png` | Skill catalog, lifecycle and editable files |
+| `model-providers.png` | AI model services by category with defaults |
 | `rbac.png` | Users, roles, permission matrix |

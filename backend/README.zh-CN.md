@@ -15,7 +15,7 @@ uv run uvicorn app.main:app --reload --port 8000
 - REST：`http://localhost:8000/api/v1` · OpenAPI：`/docs` · MCP：`http://localhost:8000/mcp`
 - 若 `../frontend/dist` 存在，会由 `/` 直接托管前端（单端口模式）。
 - 首次启动自动创建并填充 `data/platform.db`；删除该文件可重新初始化。
-- 冒烟测试：`python tests/smoke.py`（69 项断言，不依赖外部服务）。
+- 冒烟测试：`python tests/smoke.py`（110 项断言，不依赖外部服务）。
 
 ## 目录
 
@@ -52,9 +52,12 @@ app/
 | RBAC | `GET /rbac/permissions`、`/rbac/matrix`，`GET|POST|PUT|DELETE /rbac/users[/{id}]`、`/rbac/roles[/{id}]`，`POST /rbac/users/{id}/reset-password`、`POST /rbac/check` |
 | 表单 | `GET /forms/field-types`，`GET|POST /forms`，`GET /forms/code/{code}`，`GET|PUT|DELETE /forms/{id}`，`POST /forms/{id}/publish`，`GET|POST /forms/{id}/submissions` |
 | 流程 | `GET /workflows/node-types`，`GET|POST /workflows`，`GET|PUT|DELETE /workflows/{id}`，`POST /workflows/{id}/validate`、`/run`，`GET /workflows/{id}/instances`、`GET /workflows/instances/{id}` |
-| 知识库 | `GET|POST|PUT|DELETE /knowledge/collections[/{id}]`、`/knowledge/documents[/{id}]`，`POST /knowledge/documents/{id}/reindex`，`POST /knowledge/search`，`GET /knowledge/stats` |
-| 智能体 | `GET /agents/meta/runtime`，`GET|POST|PUT|DELETE /agents[/{id}]`，`POST /agents/{id}/chat`，`GET|DELETE /agents/conversations[/{id}]` |
-| MCP | `GET /mcp/tools`、`/mcp/status`，`GET|POST|PUT|DELETE /mcp/skills[/{id}]`，`/mcp/skills/catalog`、`/mcp/skills/install`，`/mcp/skills/{id}/{enable,disable,uninstall,reinstall,sync}`，`/mcp/skills/{id}/files[/...]`，`/mcp/calls[/stats,/export,{id}]`，`POST /mcp/invoke` |
+| 知识库 | `GET|POST|PUT|DELETE /knowledge/collections[/{id}]`、`/knowledge/documents[/{id}]`，`POST /knowledge/documents/{id}/reindex`，`POST /knowledge/search`，`GET /knowledge/stats`，`GET /knowledge/formats`，`POST /knowledge/upload` |
+| 智能体 | `GET /agents/meta/runtime`、`GET /agents/meta/bindings`，`GET|POST|PUT|DELETE /agents[/{id}]`，`POST /agents/{id}/chat`，`GET|DELETE /agents/conversations[/{id}]` |
+| MCP 传输 | `GET /mcp/tools`、`/mcp/status`，`GET /mcp/calls[/stats,/export,{id}]`，`DELETE /mcp/calls`，`POST /mcp/invoke` |
+| MCP 服务 | `GET|POST|PUT|DELETE /mcp/servers[/{id}]`，`GET /mcp/servers/summary`，`GET /mcp/servers/{id}/tools`，`POST /mcp/servers/{id}/{sync,enable,disable,invoke}` |
+| 技能 | `GET|POST|PUT|DELETE /skills[/{id}]`，`GET /skills/catalog`，`POST /skills/install`，`POST /skills/{id}/{enable,disable,uninstall,reinstall,sync}`，`GET|PUT|DELETE /skills/{id}/files[/...]`，`POST /skills/{id}/files/reload` |
+| AI 模型 | `GET /ai/providers/meta`，`GET|POST|PUT|DELETE /ai/providers[/{id}]`，`POST /ai/providers/{id}/{default,test}` |
 | 审计 / 元数据 | `GET /audit/logs`、`/audit/actions`，`GET /meta/health`、`/meta/version`、`/meta/stats`、`/meta/bootstrap`，`GET|PUT /settings` |
 
 所有写操作均记录审计日志，所有接口由 `Depends(deps.require(permission))` 守卫。
@@ -67,11 +70,26 @@ app/
 
 `list_forms`、`get_form`、`submit_form`、`query_records`、`list_workflows`、`get_workflow`、`run_workflow`、`get_workflow_instance`、`list_collections`、`search_knowledge`、`list_users`、`get_stats`。
 
-第三方 MCP 服务登记在 `mcp_skills` 表（`builtin` / `http` / `sse` / `stdio`）；`POST /mcp/skills/{id}/sync` 会以 `initialize` + `tools/list` 探测端点并刷新工具目录。`/mcp` 上的 Bearer Token 由纯 ASGI 中间件绑定到工具上下文，从而执行 RBAC 校验。
+**两套独立注册表。** MCP 服务与技能是独立实体，各自拥有数据表、路由与生命周期（见 [ADR-0008](../docs/adr/0008-mcp-skills-split-model-providers-and-knowledge-upload.md)）：
 
-**技能生命周期。** `GET /mcp/skills/catalog` 提供 5 个可安装模板；`POST /mcp/skills/install` 安装技能并生成 5 个可编辑文件（`SKILL.md`、`manifest.json`、`config.json`、`tools.json`、`README.md`），同时写入 `mcp_skill_files` 并镜像到 `data/skills/<code>/`。`enable` / `disable` / `uninstall` / `reinstall` 管理状态机；卸载删除文件但保留注册项。文件增删查改位于 `/mcp/skills/{id}/files/{path}`，含路径穿越校验与 `POST .../files/reload` 磁盘重载。
+| 注册表 | 数据表 | 路由 | 职责 |
+| --- | --- | --- | --- |
+| MCP 服务 | `mcp_servers` | `/mcp/servers` | 连接配置（`transport`、`endpoint` / `command`、`auth_config`）、`probe()` + `sync()` 工具发现、健康/状态、`invoke_on_server()` |
+| 技能 | `mcp_skills` | `/skills` | 生命周期、目录、manifest、可编辑文件、可空 `server_id` 关联 |
 
-**调用日记。** `mcp_call_logs` 记录每次工具调用（MCP `tools/call`、REST `invoke`、智能体工具步骤）与所有非工具 JSON-RPC 方法。ASGI 中间件为上下文打上 `source` / `actor` / `request_id` 标签并一次性缓冲请求体；`mcp_tools.call_tool()` 在 `finally` 中写入参数、结果预览、状态、错误与耗时，因此失败调用同样留痕。查询 / 统计 / CSV 导出 / 详情 / 清空分别由 `GET /mcp/calls`、`/calls/stats`、`/calls/export`、`/calls/{id}`、`DELETE /mcp/calls` 提供，受 `mcp:read` / `mcp:write` 约束。详见 [MCP 技能与调用日记](../docs/mcp-skills.md)。
+`services/mcp_servers.py::declared_tools()` 把已启用服务声明的工具合并进 `mcp_tools.list_tools(include_external=True)`；`call_remote_tool` MCP 桥接工具以 `mcp:invoke` 权限把调用转发给所属服务，并写入 `target=server:<code>` 的日记记录。`mcp_tools.agent_tools(agent, fmt)` 按智能体的 `server_ids` / `skill_ids` 绑定收窄 ReAct 工具集。删除任一实体都不会连带删除另一实体。
+
+**MCP 服务。** `GET /mcp/servers/summary` 返回注册表统计；`POST /mcp/servers` 注册 `http` / `sse` / `stdio` 连接；`POST /mcp/servers/{id}/sync` 以 `initialize` + `tools/list` 探测端点并刷新声明的工具；`GET /mcp/servers/{id}/tools`、`/{id}/enable`、`/{id}/disable`、`/{id}/invoke` 构成完整接口面。`/mcp` 上的 Bearer Token 由纯 ASGI 中间件绑定到工具上下文，从而执行 RBAC 校验。
+
+**技能生命周期。** `GET /skills/catalog` 提供 5 个可安装模板；`POST /skills/install` 安装技能并生成 5 个可编辑文件（`SKILL.md`、`manifest.json`、`config.json`、`tools.json`、`README.md`），同时写入 `mcp_skill_files` 并镜像到 `data/skills/<code>/`。`enable` / `disable` / `uninstall` / `reinstall` 管理状态机；卸载删除文件但保留注册项。`POST /skills/{id}/sync` 从关联服务（`server_id`）刷新工具。文件增删查改位于 `/skills/{id}/files/{path}`，含路径穿越校验与 `POST .../files/reload` 磁盘重载。
+
+**AI 模型服务。** `GET /ai/providers/meta` 返回六类模型（`llm`、`asr`、`tts`、`embedding`、`rerank`、`vision`）与厂商；`GET|POST|PUT|DELETE /ai/providers[/{id}]` 管理配置（`api_key` 只写，读取仅返回 `has_api_key` / `api_key_masked`）；`POST /ai/providers/{id}/default` 保证每类一个默认项，`/{id}/test` 探测连通性。`model_providers.effective_llm()` 让 `llm` 默认项在运行时覆盖 `LLM_*` 环境变量。
+
+**知识库上传。** `GET /knowledge/formats` 列出支持的扩展名；`POST /knowledge/upload` 接收 multipart 批量文件，由 `services/documents.py` 解析（OOXML / OpenDocument / EPUB 走标准库 ZIP+XML，PDF 走 `pdftotext`，图片走 `tesseract`，另含文本/数据格式），并立即分块索引进 BM25。详见 [知识库上传](../docs/knowledge-upload.md)。
+
+**智能体绑定。** `GET /agents/meta/bindings` 返回全部可绑定资源；创建/更新接受 `kb_ids`、`skill_ids`、`server_ids`、`workflow_ids`，保存时由 `routers/agents.py::_clean_ids()` 清理失效 id。
+
+**调用日记。** `mcp_call_logs` 记录每次工具调用（MCP `tools/call`、REST `invoke`、智能体工具步骤）与所有非工具 JSON-RPC 方法，并以 `target` 列标识外部服务。ASGI 中间件为上下文打上 `source` / `actor` / `request_id` 标签并一次性缓冲请求体；`mcp_tools.call_tool()` 在 `finally` 中写入参数、结果预览、状态、错误与耗时，因此失败调用同样留痕。查询 / 统计 / CSV 导出 / 详情 / 清空分别由 `GET /mcp/calls`、`/calls/stats`、`/calls/export`、`/calls/{id}`、`DELETE /mcp/calls` 提供，受 `mcp:read` / `mcp:write` 约束。详见 [MCP 服务、技能与调用日记](../docs/mcp-skills.md)。
 
 ## 认证与安全模型
 

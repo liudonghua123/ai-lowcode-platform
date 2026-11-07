@@ -8,7 +8,9 @@ import Forms from '@/pages/Forms'
 import Workflows from '@/pages/Workflows'
 import Knowledge from '@/pages/Knowledge'
 import Agents from '@/pages/Agents'
-import McpSkills from '@/pages/McpSkills'
+import McpServers from '@/pages/McpServers'
+import Skills from '@/pages/Skills'
+import ModelProviders from '@/pages/ModelProviders'
 import Rbac from '@/pages/Rbac'
 import AuthSettings from '@/pages/AuthSettings'
 import Audit from '@/pages/Audit'
@@ -35,7 +37,9 @@ function AppRoutes() {
       <Route path="/workflows" element={<Workflows />} />
       <Route path="/knowledge" element={<Knowledge />} />
       <Route path="/agents" element={<Agents />} />
-      <Route path="/mcp" element={<McpSkills />} />
+      <Route path="/mcp" element={<McpServers />} />
+      <Route path="/skills" element={<Skills />} />
+      <Route path="/models" element={<ModelProviders />} />
       <Route path="/rbac" element={<Rbac />} />
       <Route path="/auth" element={<AuthSettings />} />
       <Route path="/audit" element={<Audit />} />

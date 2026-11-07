@@ -119,7 +119,8 @@ Built-in roles: `admin` (all), `developer` (build forms/workflows/agents/knowled
 | LLM-driven unauthorized write | ReAct tool calls re-check the logged-in user's permissions | Malicious tool arguments still need schema validation |
 | Identity leak between concurrent requests | `ContextVar` binding with `try/finally` reset | — |
 | SSO spoofing | `state`/`nonce` in `sso_states`, config stored server-side | Demo mode intentionally skips real IdP validation |
-| Secret leakage | `.env` in `.gitignore`, no raw provider config, `has_api_key` boolean only | Default `SECRET_KEY` must be replaced |
+| Secret leakage | `.env` in `.gitignore`, no raw SSO provider config, `has_api_key` boolean only; `ai_providers.api_key` is write-only and responses expose only `has_api_key` / `api_key_masked` | Default `SECRET_KEY` must be replaced; provider keys are plaintext in SQLite — encrypt at rest in production |
+| Untrusted document upload | Allow-listed extensions, ≤20 files / ≤20 MB each, `documents.parse()` never executes file content, extracted text is RBAC-scoped to the target collection | ZIP/XML parsers are best-effort; macro-enabled / legacy Office binaries are not safely parsed — quarantine untrusted files |
 | Repudiation | Full audit trail with actor/IP/timestamp | Logs are local SQLite |
 
 ## 8. Production hardening checklist
@@ -132,3 +133,5 @@ Built-in roles: `admin` (all), `developer` (build forms/workflows/agents/knowled
 - [ ] Add rate limiting, login lockout and structured security logging.
 - [ ] Move SQLite to Postgres; encrypt backups; rotate audit-log retention.
 - [ ] Add human approval for destructive AI tools (`submit_form`, `run_workflow`).
+- [ ] Encrypt AI provider API keys at rest; restrict `settings:write` to trusted administrators.
+- [ ] Quarantine / scan uploaded documents before parsing; disable the optional PDF/OCR helpers on untrusted hosts.

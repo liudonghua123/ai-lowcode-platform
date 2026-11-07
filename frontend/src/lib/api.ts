@@ -59,3 +59,6 @@ export const post = <T = any>(p: string, b?: unknown, o?: RequestOptions) =>
 export const put = <T = any>(p: string, b?: unknown, o?: RequestOptions) =>
   api<T>(p, { ...o, method: 'PUT', body: b })
 export const del = <T = any>(p: string, o?: RequestOptions) => api<T>(p, { ...o, method: 'DELETE' })
+/** multipart/form-data upload — pass a FormData as body, no Content-Type override. */
+export const upload = <T = any>(p: string, form: FormData, o?: RequestOptions) =>
+  api<T>(p, { ...o, method: 'POST', body: form, raw: true })

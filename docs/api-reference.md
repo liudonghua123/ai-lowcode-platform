@@ -9,7 +9,7 @@
 | Machine-readable source | `GET /openapi.json`, interactive UI at `GET /docs` |
 | Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Security Architecture](security.md) · [Data Model](data-model.md) |
 
-> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **80 个 OpenAPI 路径 / 107 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 12 个平台工具，并提供技能安装/启用/禁用/卸载、可编辑技能文件与全量调用日记。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 技能与调用日记](mcp-skills.md)。
+> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **96 个 OpenAPI 路径 / 131 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 12 个平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank 多类别模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
 
 ## 1. Conventions
 
@@ -42,7 +42,7 @@
 }
 ```
 
-## 2. REST endpoints (80 paths)
+## 2. REST endpoints (96 paths)
 
 ### 2.1 Authentication & MFA — `/auth`
 
@@ -97,6 +97,10 @@
 | POST | `/knowledge/documents/{document_id}/reindex` | `knowledge:write` |
 | POST | `/knowledge/search` | `knowledge:read` |
 | GET | `/knowledge/stats` | `knowledge:read` |
+| GET | `/knowledge/formats` | `knowledge:read` (supported upload formats) |
+| POST | `/knowledge/upload` | `knowledge:write` (multipart: `collection_id`, `files[]`, optional `title`) |
+
+`POST /knowledge/upload` accepts up to 20 files (≤20 MB each) and parses Markdown, plain text, CSV/TSV, JSON/YAML, HTML/XML, PDF (via `pdftotext`), Word `.docx`, Excel `.xlsx/.xlsm`, PowerPoint `.pptx`, OpenDocument `.odt/.ods/.odp`, EPUB, RTF, images (OCR via `tesseract`) and more. Each file becomes a `kb_documents` row with `file_name`, `file_type`, `file_size`, `parse_status`, `parse_error`, and is chunked/indexed for BM25 immediately. See [Knowledge Upload](knowledge-upload.md).
 
 ### 2.5 AI agents — `/agents`
 
@@ -108,35 +112,71 @@
 | GET | `/agents/{agent_id}/conversations` | `agent:read` |
 | GET, DELETE | `/agents/conversations/{conversation_id}` | `agent:read` |
 | GET | `/agents/meta/runtime` | `agent:read` |
+| GET | `/agents/meta/bindings` | `agent:read` (all bindable resources in one call) |
 
-`POST /agents/{agent_id}/chat` body: `{"message": "...", "conversation_id": 12}` → `{answer, steps, sources, model, provider, orchestration}`.
+`POST /agents` / `PUT /agents/{agent_id}` accept `kb_ids`, `skill_ids`, `server_ids` (MCP servers) and `workflow_ids`; unknown ids are dropped. `GET /agents/meta/bindings` returns the servers, skills, collections, workflows and LLM configurations available to the agent editor. The ReAct tool set is filtered to the tools declared by the bound servers / skills. `POST /agents/{agent_id}/chat` body: `{"message": "...", "conversation_id": 12}` → `{answer, steps, sources, model, provider, tools_available, bound_servers, orchestration}`.
 
-### 2.6 MCP management — `/mcp`
+### 2.6 MCP servers — `/mcp/servers`
+
+MCP servers and Skills are **independent registries** with separate routes, tables and UI pages.
 
 | Methods | Path | Permission |
 | --- | --- | --- |
-| GET | `/mcp/tools` | `mcp:read` |
+| GET, POST | `/mcp/servers` | `mcp:read` / `mcp:write` |
+| GET | `/mcp/servers/summary` | `mcp:read` |
+| GET, PUT, DELETE | `/mcp/servers/{server_id}` | `mcp:read` / `mcp:write` |
+| GET | `/mcp/servers/{server_id}/tools` | `mcp:read` |
+| POST | `/mcp/servers/{server_id}/sync` | `mcp:write` |
+| POST | `/mcp/servers/{server_id}/enable`, `/disable` | `mcp:write` |
+| POST | `/mcp/servers/{server_id}/invoke` | `mcp:invoke` |
+
+A server declares `transport` (`builtin` / `http` / `sse` / `stdio`), `endpoint`/`command`, `auth_config`, `tools`, `enabled`, `health`. `sync` probes a remote streamable-HTTP endpoint with `initialize` + `tools/list`. Enabled servers contribute their declared tools to the shared registry; remote tools are dispatched through `services/mcp_servers.invoke_external` (JSON-RPC `tools/call`) and journaled with `target=server:<code>`.
+
+### 2.7 Skills — `/skills`
+
+| Methods | Path | Permission |
+| --- | --- | --- |
+| GET, POST | `/skills` | `mcp:read` / `mcp:write` |
+| GET | `/skills/catalog` | `mcp:read` |
+| POST | `/skills/install` | `mcp:write` |
+| GET, PUT, DELETE | `/skills/{skill_id}` | `mcp:read` / `mcp:write` |
+| POST | `/skills/{skill_id}/enable`, `/disable`, `/uninstall`, `/reinstall` | `mcp:write` |
+| POST | `/skills/{skill_id}/sync` | `mcp:write` (through `server_id`) |
+| GET | `/skills/{skill_id}/files` | `mcp:read` |
+| POST | `/skills/{skill_id}/files/reload` | `mcp:write` |
+| GET, PUT, DELETE | `/skills/{skill_id}/files/{path}` | `mcp:read` / `mcp:write` |
+
+A Skill has its own lifecycle, manifest and editable files (`SKILL.md`, `manifest.json`, `config.json`, `tools.json`, `README.md`) mirrored to `data/skills/<code>/`. `server_id` optionally links a skill to an MCP server; deleting a server sets the link to `NULL` without deleting the skill.
+
+### 2.8 MCP transport, tools & call journal — `/mcp`
+
+| Methods | Path | Permission |
+| --- | --- | --- |
+| GET | `/mcp/tools` | `mcp:read` (12 platform tools + enabled-server tools) |
 | GET | `/mcp/status` | `mcp:read` |
-| GET, POST | `/mcp/skills` | `mcp:read` / `mcp:write` |
-| GET | `/mcp/skills/catalog` | `mcp:read` |
-| POST | `/mcp/skills/install` | `mcp:write` |
-| GET, PUT, DELETE | `/mcp/skills/{skill_id}` | `mcp:read` / `mcp:write` |
-| POST | `/mcp/skills/{skill_id}/enable`, `/disable`, `/uninstall`, `/reinstall` | `mcp:write` |
-| GET | `/mcp/skills/{skill_id}/files` | `mcp:read` |
-| POST | `/mcp/skills/{skill_id}/files/reload` | `mcp:write` |
-| GET, PUT, DELETE | `/mcp/skills/{skill_id}/files/{path}` | `mcp:read` / `mcp:write` |
-| POST | `/mcp/skills/{skill_id}/sync` | `mcp:write` |
 | GET | `/mcp/calls`, `/mcp/calls/stats`, `/mcp/calls/export`, `/mcp/calls/{call_id}` | `mcp:read` |
 | DELETE | `/mcp/calls` | `mcp:write` |
 | POST | `/mcp/invoke` | `mcp:invoke` |
 
-`POST /mcp/invoke` body: `{"tool": "list_forms", "arguments": {"status": "published"}}`.
-`POST /mcp/skills/install` body: `{"code": "weather"}` (or full `InstallIn` fields). `PUT /mcp/skills/{id}/files/config.json` body: `{"content": "..."}`.
-`GET /mcp/calls` accepts `tool`, `source`, `status`, `actor`, `method`, `q`, `limit`, `offset`. `/mcp/calls/export` returns `text/csv`.
+`POST /mcp/invoke` body: `{"tool": "list_forms", "arguments": {"status": "published"}, "target": "server:platform-builtin"}`.
+`POST /skills/install` body: `{"code": "weather"}` (or full `InstallIn` fields). `PUT /skills/{id}/files/config.json` body: `{"content": "..."}`.
+`GET /mcp/calls` accepts `tool`, `source`, `status`, `actor`, `method`, `q`, `limit`, `offset`. `/mcp/calls/export` returns `text/csv` including the `target` column.
 
-See [MCP Skills & Call Journal](mcp-skills.md) for the lifecycle state machine, file conventions and journal sources.
+### 2.9 AI model providers — `/ai/providers`
 
-### 2.7 RBAC — `/rbac`
+| Methods | Path | Permission |
+| --- | --- | --- |
+| GET, POST | `/ai/providers` | `mcp:read` / `settings:write` |
+| GET | `/ai/providers/meta` | `mcp:read` (categories, vendors, defaults, effective runtime) |
+| GET, PUT, DELETE | `/ai/providers/{provider_id}` | `mcp:read` / `settings:write` |
+| POST | `/ai/providers/{provider_id}/default` | `settings:write` |
+| POST | `/ai/providers/{provider_id}/test` | `mcp:read` (optional `{"live": true}` probe) |
+
+Categories: `llm`, `asr`, `tts`, `embedding`, `rerank`, `vision`. `api_key` is write-only — responses contain `has_api_key` and `api_key_masked`. One default per category; the `llm` default overrides `LLM_*` environment variables at runtime. See [AI Model Services](ai-models.md).
+
+See [MCP Servers, Skills & Call Journal](mcp-skills.md) for the two registries, lifecycle state machine, file conventions and journal sources.
+
+### 2.10 RBAC — `/rbac`
 
 | Methods | Path | Permission |
 | --- | --- | --- |
@@ -149,7 +189,7 @@ See [MCP Skills & Call Journal](mcp-skills.md) for the lifecycle state machine, 
 | PUT, DELETE | `/rbac/users/{user_id}` | `rbac:write` |
 | POST | `/rbac/users/{user_id}/reset-password` | `rbac:write` |
 
-### 2.8 Audit, metadata & settings
+### 2.11 Audit, metadata & settings
 
 | Methods | Path | Permission |
 | --- | --- | --- |
@@ -201,7 +241,7 @@ All input schemas are strict objects (`additionalProperties: false`).
 | `list_users` | — | — | `rbac:read` | no |
 | `get_stats` | — | — | `dashboard:view` | no |
 
-`list_tools("openai")` emits the same specs as OpenAI function-calling definitions for the ReAct loop.
+`list_tools("openai")` emits the same specs as OpenAI function-calling definitions for the ReAct loop. `mcp_tools.agent_tools(agent)` further filters this catalog to the tools declared by the agent's bound MCP servers (`server_ids`) and skills (`skill_ids`); enabled servers may add remote tool specs resolved through `mcp_servers.external_specs`. The fastmcp bridge tool `call_remote_tool` lets MCP clients reach those remote tools.
 
 ## 5. Typical sequences
 
@@ -232,4 +272,4 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/jso
 - All business endpoints are versioned under `/api/v1`; breaking changes require a new prefix.
 - MCP protocol version is negotiated during `initialize` (no hard-coded client requirement).
 - `/openapi.json` is the authoritative machine-readable contract; regenerate this table when routers change.
-- `scripts/smoke.py` (69 assertions) exercises the critical subset of these endpoints end-to-end.
+- `scripts/smoke.py` (110 assertions) exercises the critical subset of these endpoints end-to-end.

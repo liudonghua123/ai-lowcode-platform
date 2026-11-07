@@ -1,9 +1,9 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
-  BookOpen, Bot, ChevronDown, ExternalLink, FileText, GitBranch, LayoutDashboard,
-  LogOut, Menu, Monitor, Moon, Plug, ScrollText, Settings2, ShieldCheck, Sun,
-  UsersRound, X, Languages, Sparkles,
+  BookOpen, Bot, ChevronDown, Cpu, ExternalLink, FileText, GitBranch, LayoutDashboard,
+  LogOut, Menu, Monitor, Moon, Package, ScrollText, Server, Settings2, ShieldCheck,
+  Sun, UsersRound, X, Languages, Sparkles,
 } from 'lucide-react'
 import { useI18n } from '@/i18n'
 import { useTheme } from '@/theme/ThemeProvider'
@@ -53,7 +53,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     { key: 'nav.intelligence', items: [
       { to: '/knowledge', icon: <BookOpen className="h-4 w-4" />, key: 'nav.knowledge', perm: 'knowledge:read' },
       { to: '/agents', icon: <Bot className="h-4 w-4" />, key: 'nav.agents', perm: 'agent:read' },
-      { to: '/mcp', icon: <Plug className="h-4 w-4" />, key: 'nav.mcp', perm: 'mcp:read' },
+      { to: '/mcp', icon: <Server className="h-4 w-4" />, key: 'nav.mcp', perm: 'mcp:read' },
+      { to: '/skills', icon: <Package className="h-4 w-4" />, key: 'nav.skills', perm: 'mcp:read' },
+      { to: '/models', icon: <Cpu className="h-4 w-4" />, key: 'nav.models', perm: 'mcp:read' },
     ] },
     { key: 'nav.governance', items: [
       { to: '/rbac', icon: <UsersRound className="h-4 w-4" />, key: 'nav.rbac', perm: 'rbac:read' },

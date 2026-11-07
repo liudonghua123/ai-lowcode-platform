@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  Bot, BookOpen, ChevronDown, ChevronRight, CircleHelp, Cpu, Database, GitBranch,
-  MessageSquare, Plus, RefreshCw, Send, Settings2, Sparkles, Trash2, Wrench,
+  Bot, BookOpen, ChevronDown, ChevronRight, Cpu, Database, GitBranch, Package,
+  MessageSquare, Plus, RefreshCw, Search, Send, Server, Settings2, Sparkles,
+  Trash2, Wrench,
 } from 'lucide-react'
 import { PageHeader, SectionTitle } from '@/components/PageHeader'
 import {
@@ -14,7 +15,7 @@ import { useI18n } from '@/i18n'
 import { useApp } from '@/store/AppContext'
 import { del, get, post, put } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import type { AgentDef, ChatResponse, ChatStep, KbCollection, McpSkill, ToolSpec, WorkflowDef } from '@/types'
+import type { AgentBindings, AgentDef, BindableItem, ChatResponse, ChatStep, ToolSpec } from '@/types'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -31,6 +32,18 @@ const SUGGESTIONS = [
   'Show platform statistics',
 ]
 
+interface BindingConfig {
+  name: string; description: string; mode: string; model: string
+  system_prompt: string; temperature: number
+  kb_ids: number[]; skill_ids: number[]; server_ids: number[]; workflow_ids: number[]
+}
+
+const emptyConfig = (): BindingConfig => ({
+  name: '', description: '', mode: 'hybrid', model: '',
+  system_prompt: 'You are a helpful enterprise assistant.', temperature: 0.3,
+  kb_ids: [], skill_ids: [], server_ids: [], workflow_ids: [],
+})
+
 export default function Agents() {
   const { t } = useI18n()
   const { can } = useApp()
@@ -46,28 +59,22 @@ export default function Agents() {
   const [rightTab, setRightTab] = useState('config')
   const [runtime, setRuntime] = useState<any>(null)
   const [tools, setTools] = useState<ToolSpec[]>([])
-  const [kb, setKb] = useState<KbCollection[]>([])
-  const [skills, setSkills] = useState<McpSkill[]>([])
-  const [workflows, setWorkflows] = useState<WorkflowDef[]>([])
-  const [config, setConfig] = useState<any>(null)
+  const [bindings, setBindings] = useState<AgentBindings | null>(null)
+  const [config, setConfig] = useState<BindingConfig | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const [createForm, setCreateForm] = useState<any>({})
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [newAgent, setNewAgent] = useState({ code: '', name: '', description: '', mode: 'hybrid' })
   const [expanded, setExpanded] = useState<Record<number, boolean>>({})
 
   const load = async () => {
     try {
-      const [a, rt, tv, k, s, w] = await Promise.all([
+      const [a, rt, b] = await Promise.all([
         get<{ agents: AgentDef[] }>('/agents'),
         get<{ runtime: any; tools: ToolSpec[] }>('/agents/meta/runtime'),
-        Promise.resolve(null),
-        get<{ collections: KbCollection[] }>('/knowledge/collections'),
-        get<{ skills: McpSkill[] }>('/mcp/skills'),
-        get<{ workflows: WorkflowDef[] }>('/workflows'),
+        get<AgentBindings>('/agents/meta/bindings'),
       ])
-      void tv
       setAgents(a.agents || []); setRuntime(rt.runtime); setTools(rt.tools || [])
-      setKb(k.collections || []); setSkills(s.skills || []); setWorkflows(w.workflows || [])
+      setBindings(b)
       return a.agents || []
     } catch { return [] }
   }
@@ -76,9 +83,10 @@ export default function Agents() {
 
   const select = (a: AgentDef) => {
     setSelected(a)
-    setConfig({ name: a.name, description: a.description, mode: a.mode, model: a.model,
-      system_prompt: a.system_prompt, temperature: a.temperature,
-      kb_ids: [...(a.kb_ids || [])], skill_ids: [...(a.skill_ids || [])], workflow_ids: [...(a.workflow_ids || [])] })
+    setConfig({ name: a.name, description: a.description || '', mode: a.mode,
+      model: a.model || '', system_prompt: a.system_prompt || '', temperature: a.temperature,
+      kb_ids: [...(a.kb_ids || [])], skill_ids: [...(a.skill_ids || [])],
+      server_ids: [...(a.server_ids || [])], workflow_ids: [...(a.workflow_ids || [])] })
     setMessages([]); setConversationId(null)
   }
 
@@ -103,13 +111,14 @@ export default function Agents() {
     finally { setSending(false) }
   }
 
+  const openCreate = () => {
+    setCreateForm({ code: '', ...emptyConfig(), model: runtime?.model || '', status: 'active' })
+    setCreateOpen(true)
+  }
   const create = async () => {
     try {
-      const a = await post<AgentDef>('/agents', { ...newAgent, temperature: 0.3,
-        system_prompt: 'You are a helpful enterprise assistant.', model: runtime?.model,
-        kb_ids: [], skill_ids: [], workflow_ids: [], status: 'active' })
-      setCreateOpen(false); setNewAgent({ code: '', name: '', description: '', mode: 'hybrid' })
-      await load(); select(a); toast(t('common.createdOk'), 'success')
+      const a = await post<AgentDef>('/agents', createForm)
+      setCreateOpen(false); await load(); select(a); toast(t('common.createdOk'), 'success')
     } catch (e: any) { toast(e.message, 'error') }
   }
   const saveConfig = async () => {
@@ -117,6 +126,7 @@ export default function Agents() {
     try {
       const a = await put<AgentDef>(`/agents/${selected.id}`, config)
       setSelected(a); setAgents((p) => p.map((x) => x.id === a.id ? a : x)); toast(t('common.saved'), 'success')
+      await load()
     } catch (e: any) { toast(e.message, 'error') }
   }
   const remove = async () => {
@@ -125,19 +135,37 @@ export default function Agents() {
     catch (e: any) { toast(e.message, 'error') }
     finally { setConfirmDelete(false) }
   }
-  const toggleBinding = (field: 'kb_ids' | 'skill_ids' | 'workflow_ids', id: number) => {
-    setConfig((c: any) => ({ ...c, [field]: (c[field] || []).includes(id) ? c[field].filter((x: number) => x !== id) : [...(c[field] || []), id] }))
+  const toggleBinding = (setter: (fn: (c: any) => any) => void, field: keyof BindingConfig, id: number) => {
+    setter((c: any) => ({ ...c, [field]: (c[field] || []).includes(id)
+      ? c[field].filter((x: number) => x !== id) : [...(c[field] || []), id] }))
   }
+
+  const bindingGroups = (cfg: BindingConfig, setter: (fn: (c: any) => any) => void) => [
+    { field: 'server_ids' as const, title: t('agents.mcpServers'), icon: <Server className="h-3 w-3" />,
+      items: bindings?.servers || [] },
+    { field: 'skill_ids' as const, title: t('agents.skills'), icon: <Package className="h-3 w-3" />,
+      items: bindings?.skills || [] },
+    { field: 'kb_ids' as const, title: t('agents.knowledge'), icon: <Database className="h-3 w-3" />,
+      items: bindings?.collections || [] },
+    { field: 'workflow_ids' as const, title: t('agents.workflows'), icon: <GitBranch className="h-3 w-3" />,
+      items: bindings?.workflows || [] },
+  ].map((g) => <BindingGroup key={g.field} title={g.title} icon={g.icon} items={g.items}
+    selected={(cfg[g.field] as number[]) || []}
+    onToggle={(id) => toggleBinding(setter, g.field, id)} />)
+
+  const selectedCount = config
+    ? (config.server_ids.length + config.skill_ids.length + config.kb_ids.length + config.workflow_ids.length)
+    : 0
 
   return (
     <div className="mx-auto max-w-[1600px]">
       <PageHeader icon={<Bot className="h-5 w-5" />} title={t('agents.title')} subtitle={t('agents.subtitle')}
         actions={<>
           <Badge variant="success" className="gap-1"><Cpu className="h-3 w-3" />{runtime?.agentscope?.available ? 'AgentScope ' + runtime.agentscope.version : runtime?.provider || 'mock'}</Badge>
-          {can('agent:write') && <Button size="sm" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />{t('agents.newAgent')}</Button>}
+          {can('agent:write') && <Button size="sm" onClick={openCreate}><Plus className="h-4 w-4" />{t('agents.newAgent')}</Button>}
         </>} />
 
-      <div className="grid gap-4 lg:grid-cols-[14rem_minmax(0,1fr)_20rem]">
+      <div className="grid gap-4 lg:grid-cols-[14rem_minmax(0,1fr)_22rem]">
         <Card><CardContent className="p-3">
           <SectionTitle>{t('agents.agentList')}</SectionTitle>
           <div className="space-y-1">
@@ -148,6 +176,7 @@ export default function Agents() {
                 <Bot className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{a.name}</span>
                   <span className="block truncate text-[10px] text-muted-foreground">{a.mode} · {a.model}</span></span>
+                <Badge variant="outline" className="shrink-0 text-[8px]">{(a.server_ids || []).length}</Badge>
               </button>
             ))}
           </div>
@@ -239,6 +268,7 @@ export default function Agents() {
         <Card className="h-fit"><CardContent className="p-3">
           <Tabs value={rightTab} onValueChange={setRightTab} className="mb-3 w-full" items={[
             { value: 'config', label: t('agents.config'), icon: <Settings2 className="h-3 w-3" /> },
+            { value: 'bindings', label: t('agents.bindings'), icon: <Server className="h-3 w-3" />, count: selectedCount },
             { value: 'runtime', label: t('agents.runtime'), icon: <Cpu className="h-3 w-3" /> },
             { value: 'tools', label: t('agents.tools'), count: tools.length },
           ]} />
@@ -246,31 +276,36 @@ export default function Agents() {
             <Field label={t('agents.agentName')}><Input value={config.name || ''} onChange={(e) => setConfig({ ...config, name: e.target.value })} /></Field>
             <Field label={t('agents.mode')}><Select value={config.mode} onValueChange={(v) => setConfig({ ...config, mode: v })}
               options={['query', 'act', 'hybrid'].map((m) => ({ value: m, label: t(`agents.mode${m.charAt(0).toUpperCase() + m.slice(1)}`) }))} /></Field>
-            <Field label={t('agents.model')}><Input value={config.model || ''} onChange={(e) => setConfig({ ...config, model: e.target.value })} /></Field>
-            <Field label={t('agents.systemPrompt')}><Textarea rows={4} value={config.system_prompt || ''} onChange={(e) => setConfig({ ...config, system_prompt: e.target.value })} /></Field>
+            <Field label={t('agents.model')}><Select value={config.model || ''} onValueChange={(v) => setConfig({ ...config, model: v })}
+              options={[{ value: '', label: t('agents.modelDefault') },
+                ...(bindings?.models || []).map((m) => ({ value: m.model || '', label: `${m.name} · ${m.model || 'env'}` }))]} /></Field>
+            <Field label={t('agents.systemPrompt')}><Textarea rows={3} value={config.system_prompt || ''} onChange={(e) => setConfig({ ...config, system_prompt: e.target.value })} /></Field>
             <Field label={`${t('agents.temperature')}: ${config.temperature}`}>
               <input type="range" min="0" max="1" step="0.1" className="w-full accent-[hsl(var(--primary))]"
                 value={config.temperature} onChange={(e) => setConfig({ ...config, temperature: Number(e.target.value) })} />
             </Field>
-            <BindingGroup title={t('agents.knowledge')} icon={<Database className="h-3 w-3" />}
-              items={kb.map((x) => ({ id: x.id, label: x.name }))} selected={config.kb_ids || []}
-              onToggle={(id) => toggleBinding('kb_ids', id)} />
-            <BindingGroup title={t('agents.skills')} icon={<Wrench className="h-3 w-3" />}
-              items={skills.map((x) => ({ id: x.id, label: x.name }))} selected={config.skill_ids || []}
-              onToggle={(id) => toggleBinding('skill_ids', id)} />
-            <BindingGroup title={t('agents.workflows')} icon={<GitBranch className="h-3 w-3" />}
-              items={workflows.map((x) => ({ id: x.id, label: x.name }))} selected={config.workflow_ids || []}
-              onToggle={(id) => toggleBinding('workflow_ids', id)} />
             <div className="flex gap-2">
               <Button size="sm" className="flex-1" onClick={saveConfig} disabled={!can('agent:write')}>{t('common.save')}</Button>
               <Button variant="outline" size="icon" onClick={() => setConfirmDelete(true)} disabled={!can('agent:write')}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
             </div>
           </div> : <p className="py-8 text-center text-xs text-muted-foreground">{t('agents.emptyTitle')}</p>)}
 
+          {rightTab === 'bindings' && (config && selected ? <div className="space-y-2">
+            <p className="text-[10px] text-muted-foreground">{t('agents.bindingsHint')}</p>
+            {bindingGroups(config, setConfig)}
+            <div className="flex flex-wrap gap-1 pt-1">
+              <Badge variant="secondary">{t('agents.mcpServers')}: {config.server_ids.length}</Badge>
+              <Badge variant="secondary">{t('agents.skills')}: {config.skill_ids.length}</Badge>
+              <Badge variant="secondary">{t('agents.knowledge')}: {config.kb_ids.length}</Badge>
+              <Badge variant="secondary">{t('agents.workflows')}: {config.workflow_ids.length}</Badge>
+            </div>
+            <Button size="sm" className="w-full" onClick={saveConfig} disabled={!can('agent:write')}>{t('common.save')}</Button>
+          </div> : <p className="py-8 text-center text-xs text-muted-foreground">{t('agents.emptyTitle')}</p>)}
+
           {rightTab === 'runtime' && <div className="space-y-2 text-xs">
             {[
               ['provider', runtime?.provider], ['model', runtime?.model], ['temperature', runtime?.temperature],
-              ['orchestration', runtime?.orchestration], ['tools', runtime?.tools],
+              ['config_source', runtime?.config_source], ['orchestration', runtime?.orchestration], ['tools', runtime?.tools],
               ['AgentScope', runtime?.agentscope?.available ? `v${runtime.agentscope.version}` : 'unavailable'],
               ['modules', runtime?.agentscope?.modules?.length ?? 0], ['has_api_key', String(runtime?.has_api_key ?? false)],
             ].map(([k, v]) => <div key={String(k)} className="flex items-start justify-between gap-2 rounded-md border px-2.5 py-2">
@@ -288,14 +323,32 @@ export default function Agents() {
         </CardContent></Card>
       </div>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen} title={t('agents.createTitle')}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen} title={t('agents.createTitle')} size="lg"
         footer={<><Button variant="outline" onClick={() => setCreateOpen(false)}>{t('common.cancel')}</Button><Button onClick={create}>{t('common.create')}</Button></>}>
-        <div className="space-y-3">
-          <Field label={t('agents.agentCode')}><Input value={newAgent.code} onChange={(e) => setNewAgent({ ...newAgent, code: e.target.value })} placeholder="my_agent" /></Field>
-          <Field label={t('agents.agentName')}><Input value={newAgent.name} onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })} /></Field>
-          <Field label={t('common.description')}><Textarea value={newAgent.description} onChange={(e) => setNewAgent({ ...newAgent, description: e.target.value })} /></Field>
-          <Field label={t('agents.mode')}><Select value={newAgent.mode} onValueChange={(v) => setNewAgent({ ...newAgent, mode: v })}
-            options={['query', 'act', 'hybrid'].map((m) => ({ value: m, label: t(`agents.mode${m.charAt(0).toUpperCase() + m.slice(1)}`) }))} /></Field>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-3">
+            <Field label={t('agents.agentCode')}><Input value={createForm.code} onChange={(e) => setCreateForm({ ...createForm, code: e.target.value })} placeholder="my_agent" /></Field>
+            <Field label={t('agents.agentName')}><Input value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} /></Field>
+            <Field label={t('common.description')}><Textarea rows={2} value={createForm.description} onChange={(e) => setCreateForm({ ...createForm, description: e.target.value })} /></Field>
+            <Field label={t('agents.mode')}><Select value={createForm.mode} onValueChange={(v) => setCreateForm({ ...createForm, mode: v })}
+              options={['query', 'act', 'hybrid'].map((m) => ({ value: m, label: t(`agents.mode${m.charAt(0).toUpperCase() + m.slice(1)}`) }))} /></Field>
+            <Field label={t('agents.model')}><Select value={createForm.model || ''} onValueChange={(v) => setCreateForm({ ...createForm, model: v })}
+              options={[{ value: '', label: t('agents.modelDefault') },
+                ...(bindings?.models || []).map((m) => ({ value: m.model || '', label: `${m.name} · ${m.model || 'env'}` }))]} /></Field>
+            <Field label={t('agents.systemPrompt')}><Textarea rows={3} value={createForm.system_prompt} onChange={(e) => setCreateForm({ ...createForm, system_prompt: e.target.value })} /></Field>
+            <Field label={`${t('agents.temperature')}: ${createForm.temperature}`}>
+              <input type="range" min="0" max="1" step="0.1" className="w-full accent-[hsl(var(--primary))]"
+                value={createForm.temperature} onChange={(e) => setCreateForm({ ...createForm, temperature: Number(e.target.value) })} />
+            </Field>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between"><Label className="text-xs">{t('agents.bindings')}</Label>
+              <Badge variant="outline" className="text-[9px]">{t('agents.selectedCount', { count:
+                (createForm.server_ids?.length || 0) + (createForm.skill_ids?.length || 0)
+                + (createForm.kb_ids?.length || 0) + (createForm.workflow_ids?.length || 0) })}</Badge></div>
+            <p className="text-[10px] text-muted-foreground">{t('agents.bindingsHint')}</p>
+            {bindingGroups(createForm as BindingConfig, setCreateForm)}
+          </div>
         </div>
       </Dialog>
       <ConfirmDialog open={confirmDelete} onOpenChange={setConfirmDelete} title={t('common.confirmDelete')} onConfirm={remove} />
@@ -304,20 +357,30 @@ export default function Agents() {
 }
 
 function BindingGroup({ title, icon, items, selected, onToggle }: {
-  title: string; icon: React.ReactNode; items: { id: number; label: string }[]
+  title: string; icon: React.ReactNode; items: BindableItem[]
   selected: number[]; onToggle: (id: number) => void
 }) {
+  const [query, setQuery] = useState('')
+  const filtered = items.filter((x) => `${x.name} ${x.code}`.toLowerCase().includes(query.toLowerCase()))
   return (
     <div className="rounded-lg border p-2">
-      <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium">{icon}{title}</p>
+      <p className="mb-1.5 flex items-center justify-between gap-1.5 text-[11px] font-medium">
+        <span className="flex items-center gap-1.5">{icon}{title}</span>
+        <span className="font-mono text-[9px] text-muted-foreground">{selected.length}/{items.length}</span>
+      </p>
+      <div className="relative mb-1.5">
+        <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+        <Input className="h-7 pl-7 text-[11px]" placeholder="…" value={query} onChange={(e) => setQuery(e.target.value)} />
+      </div>
       <div className="scroll-thin max-h-28 space-y-1 overflow-y-auto">
-        {items.map((x) => (
+        {filtered.map((x) => (
           <label key={x.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/60">
             <input type="checkbox" className="h-3 w-3 accent-[hsl(var(--primary))]" checked={selected.includes(x.id)} onChange={() => onToggle(x.id)} />
-            <span className="truncate">{x.label}</span>
+            <span className="min-w-0 flex-1 truncate">{x.name}</span>
+            <span className="shrink-0 font-mono text-[9px] text-muted-foreground">{x.code}</span>
           </label>
         ))}
-        {!items.length && <p className="py-1 text-[10px] text-muted-foreground">—</p>}
+        {!filtered.length && <p className="py-1 text-[10px] text-muted-foreground">—</p>}
       </div>
     </div>
   )

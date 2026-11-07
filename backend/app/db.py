@@ -129,6 +129,11 @@ CREATE TABLE IF NOT EXISTS kb_documents (
   source TEXT,
   status TEXT NOT NULL DEFAULT 'indexed',
   chunks TEXT NOT NULL DEFAULT '[]',
+  file_name TEXT,
+  file_type TEXT,
+  file_size INTEGER NOT NULL DEFAULT 0,
+  parse_status TEXT NOT NULL DEFAULT 'manual',
+  parse_error TEXT,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS agents (
@@ -142,6 +147,7 @@ CREATE TABLE IF NOT EXISTS agents (
   temperature REAL DEFAULT 0.3,
   kb_ids TEXT NOT NULL DEFAULT '[]',
   skill_ids TEXT NOT NULL DEFAULT '[]',
+  server_ids TEXT NOT NULL DEFAULT '[]',
   workflow_ids TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'active',
   created_by TEXT,
@@ -175,7 +181,43 @@ CREATE TABLE IF NOT EXISTS mcp_skills (
   description TEXT NOT NULL DEFAULT '',
   manifest TEXT NOT NULL DEFAULT '{}',
   installed_at TEXT,
-  updated_at TEXT
+  updated_at TEXT,
+  server_id INTEGER
+);
+CREATE TABLE IF NOT EXISTS mcp_servers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  transport TEXT NOT NULL DEFAULT 'http',
+  endpoint TEXT,
+  command TEXT,
+  auth_config TEXT NOT NULL DEFAULT '{}',
+  tools TEXT NOT NULL DEFAULT '[]',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  health TEXT NOT NULL DEFAULT 'unknown',
+  last_sync_at TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  source TEXT NOT NULL DEFAULT 'manual',
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ai_providers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL,
+  vendor TEXT NOT NULL DEFAULT 'custom',
+  base_url TEXT NOT NULL DEFAULT '',
+  api_key TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  config TEXT NOT NULL DEFAULT '{}',
+  description TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS mcp_call_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -189,6 +231,7 @@ CREATE TABLE IF NOT EXISTS mcp_call_logs (
   status TEXT NOT NULL DEFAULT 'success',
   error TEXT,
   result_preview TEXT,
+  target TEXT,
   duration_ms INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
@@ -234,6 +277,11 @@ CREATE TABLE IF NOT EXISTS mfa_challenges (
   consumed INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
+"""
+
+# Indexes are created *after* the idempotent column migration, because some of
+# them reference columns added by MIGRATIONS on pre-existing databases.
+INDEX_SCHEMA = """
 CREATE INDEX IF NOT EXISTS idx_submissions_form ON form_submissions(form_id);
 CREATE INDEX IF NOT EXISTS idx_instances_wf ON workflow_instances(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_kbdocs_collection ON kb_documents(collection_id);
@@ -241,6 +289,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mcp_calls_created ON mcp_call_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mcp_calls_tool ON mcp_call_logs(tool);
 CREATE INDEX IF NOT EXISTS idx_skill_files_skill ON mcp_skill_files(skill_id);
+CREATE INDEX IF NOT EXISTS idx_ai_providers_category ON ai_providers(category, is_default);
+CREATE INDEX IF NOT EXISTS idx_mcp_servers_enabled ON mcp_servers(enabled);
+CREATE INDEX IF NOT EXISTS idx_kbdocs_file_type ON kb_documents(file_type);
 """
 
 # Columns added after the first release. SQLite cannot add them through
@@ -254,6 +305,20 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "manifest": "TEXT NOT NULL DEFAULT '{}'",
         "installed_at": "TEXT",
         "updated_at": "TEXT",
+        "server_id": "INTEGER",
+    },
+    "kb_documents": {
+        "file_name": "TEXT",
+        "file_type": "TEXT",
+        "file_size": "INTEGER NOT NULL DEFAULT 0",
+        "parse_status": "TEXT NOT NULL DEFAULT 'manual'",
+        "parse_error": "TEXT",
+    },
+    "agents": {
+        "server_ids": "TEXT NOT NULL DEFAULT '[]'",
+    },
+    "mcp_call_logs": {
+        "target": "TEXT",
     },
 }
 
@@ -370,6 +435,8 @@ def init_db() -> None:
     conn().executescript(SCHEMA)
     conn().commit()
     _migrate()
+    conn().executescript(INDEX_SCHEMA)
+    conn().commit()
 
 
 def is_empty() -> bool:

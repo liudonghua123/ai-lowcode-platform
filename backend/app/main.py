@@ -20,7 +20,20 @@ from starlette.staticfiles import StaticFiles
 from . import __version__, db, deps, security, seed
 from .config import settings
 from .mcp_server import build_mcp
-from .routers import agents, audit, auth, forms, knowledge, mcp, meta, rbac, workflows
+from .routers import (
+    agents,
+    ai_providers,
+    audit,
+    auth,
+    forms,
+    knowledge,
+    mcp,
+    mcp_servers,
+    meta,
+    rbac,
+    skills,
+    workflows,
+)
 from .services import mcp_journal, mcp_tools, skill_files
 
 mcp_routes, mcp_http_app, mcp_mode = build_mcp()
@@ -30,10 +43,13 @@ mcp_routes, mcp_http_app, mcp_mode = build_mcp()
 async def lifespan(app: FastAPI):
     db.init_db()
     seeded = seed.seed_if_empty()
+    registries = seed.ensure_registries()
     files = skill_files.bootstrap()
     mcp_journal.ensure_demo()
     if seeded:
         print(f"[boot] database initialized: {settings.resolved_db_path}")
+    if any(registries.values()):
+        print(f"[boot] registries provisioned: {registries}")
     if files["files_created"]:
         print(f"[boot] skill files materialized: {files['files_created']}")
     print(f"[boot] MCP transport: {mcp_mode} at /mcp ({len(mcp_tools.TOOL_SPECS)} tools)")
@@ -158,7 +174,8 @@ class MCPAuthASGIMiddleware:
 app.add_middleware(MCPAuthASGIMiddleware)
 
 for r in (auth.router, rbac.router, forms.router, workflows.router, knowledge.router,
-          agents.router, mcp.router, audit.router, meta.router, meta.settings_router):
+          agents.router, mcp.router, mcp_servers.router, skills.router,
+          ai_providers.router, audit.router, meta.router, meta.settings_router):
     app.include_router(r, prefix=settings.api_prefix)
 
 app.router.routes.extend(mcp_routes)

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from .. import __version__, db, deps, security
 from ..config import settings
 from ..routers import forms, workflows
-from ..services import llm, mcp_tools, sso
+from ..services import llm, mcp_servers, mcp_tools, model_providers, skill_catalog, sso
 
 router = APIRouter(prefix="/meta", tags=["Metadata"])
 settings_router = APIRouter(prefix="/settings", tags=["Settings"])
@@ -19,8 +19,12 @@ def health(request: Request):
         "env": settings.app_env,
         "mcp": {"enabled": settings.mcp_enabled, "mode": getattr(request.app.state, "mcp_mode", "unknown"),
                 "endpoint": "/mcp"},
-        "llm": {"provider": settings.llm_provider, "model": settings.llm_model,
+        "llm": {"provider": llm.describe()["provider"], "model": llm.describe()["model"],
+                "config_source": llm.describe()["config_source"],
                 "agentscope": llm.AGENTSCOPE_INFO["available"]},
+        "registries": {"mcp_servers": mcp_servers.stats()["total"],
+                       "skills": int(db.scalar("SELECT COUNT(*) FROM mcp_skills") or 0),
+                       "model_providers": model_providers.meta()["total"]},
         "database": "sqlite",
     }
 
@@ -68,7 +72,17 @@ def bootstrap(user: dict = Depends(deps.get_current_user), request: Request = No
         "agents": {"modes": ["query", "act", "hybrid"], "runtime": llm.describe()},
         "mcp": {"types": ["builtin", "http", "sse", "stdio"], "endpoint": "/mcp",
                 "mode": getattr(request.app.state, "mcp_mode", "unknown") if request else "unknown",
-                "tool_count": len(mcp_tools.TOOL_SPECS)},
+                "tool_count": len(mcp_tools.list_tools()),
+                "builtin_tool_count": len(mcp_tools.TOOL_SPECS),
+                "server_count": mcp_servers.stats()["total"]},
+        "skills": {"catalog_count": len(skill_catalog.CATALOG_SPECS),
+                   "installed": int(db.scalar(
+                       "SELECT COUNT(*) FROM mcp_skills WHERE status!='uninstalled'") or 0),
+                   "types": ["builtin", "http", "sse", "stdio"],
+                   "statuses": ["installed", "disabled", "uninstalled", "error"]},
+        "ai": {"categories": list(model_providers.CATEGORY_CODES),
+               "providers": model_providers.meta()["total"],
+               "defaults": model_providers.meta()["defaults"]},
         "user": {k: v for k, v in user.items() if k not in {"password_hash", "otp_secret", "passkeys"}},
     }
 

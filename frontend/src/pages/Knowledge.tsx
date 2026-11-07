@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   BookOpen, Database, FileText, Layers3, Plus, RefreshCw, Search, Trash2,
-  Eye, Pencil, Sparkles,
+  Eye, Pencil, Sparkles, UploadCloud, CheckCircle2, XCircle, FileUp,
 } from 'lucide-react'
 import { PageHeader, SectionTitle } from '@/components/PageHeader'
 import {
@@ -10,9 +10,9 @@ import {
 import { ConfirmDialog, Dialog, Tabs, useToast } from '@/components/ui/overlay'
 import { useI18n } from '@/i18n'
 import { useApp } from '@/store/AppContext'
-import { del, get, post, put } from '@/lib/api'
+import { del, get, post, put, upload } from '@/lib/api'
 import { cn, formatDate } from '@/lib/utils'
-import type { KbCollection, KbDocument, RagHit } from '@/types'
+import type { KbCollection, KbDocument, RagHit, UploadFormats, UploadedDoc } from '@/types'
 
 export default function Knowledge() {
   const { t, locale } = useI18n()
@@ -34,6 +34,14 @@ export default function Knowledge() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [newColl, setNewColl] = useState({ code: '', name: '', description: '', chunk_size: 480 })
   const [docForm, setDocForm] = useState({ id: 0, title: '', content: '', source: 'manual' })
+  const [formats, setFormats] = useState<UploadFormats | null>(null)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [uploadFiles, setUploadFiles] = useState<File[]>([])
+  const [uploadTitle, setUploadTitle] = useState('')
+  const [uploadCollection, setUploadCollection] = useState<number>(0)
+  const [uploading, setUploading] = useState(false)
+  const [uploadResults, setUploadResults] = useState<UploadedDoc[]>([])
+  const [dragOver, setDragOver] = useState(false)
 
   const loadCollections = async () => {
     try {
@@ -49,7 +57,11 @@ export default function Knowledge() {
     try { const r = await get<{ documents: KbDocument[] }>(`/knowledge/documents?collection_id=${cid}&q=${encodeURIComponent(search)}`)
       setDocuments(r.documents || []) } catch { setDocuments([]) }
   }
-  useEffect(() => { void loadCollections(); get('/knowledge/stats').then(setStats).catch(() => {}) }, [])
+  useEffect(() => {
+    void loadCollections()
+    get('/knowledge/stats').then(setStats).catch(() => {})
+    get<UploadFormats>('/knowledge/formats').then(setFormats).catch(() => {})
+  }, [])
   useEffect(() => { if (selected) void loadDocs(selected.id) }, [selected?.id, search])
 
   const createCollection = async () => {
@@ -88,13 +100,40 @@ export default function Knowledge() {
       setHits(r.hits || []); setContext(r.context || ''); setRightTab('search') }
     catch (e: any) { toast(e.message, 'error') }
   }
+  const openUpload = () => {
+    setUploadFiles([]); setUploadTitle(''); setUploadResults([])
+    setUploadCollection(selected?.id || collections[0]?.id || 0)
+    setUploadOpen(true)
+  }
+  const chooseFiles = (list: FileList | null) => {
+    if (!list) return
+    setUploadFiles((p) => [...p, ...Array.from(list)].slice(0, 20))
+  }
+  const doUpload = async () => {
+    if (!uploadCollection || !uploadFiles.length) return
+    const form = new FormData()
+    form.append('collection_id', String(uploadCollection))
+    if (uploadTitle.trim()) form.append('title', uploadTitle.trim())
+    for (const f of uploadFiles) form.append('files', f)
+    setUploading(true)
+    try {
+      const r = await upload<{ uploaded: number; failed: number; documents: UploadedDoc[] }>(
+        '/knowledge/upload', form)
+      setUploadResults(r.documents || [])
+      toast(t('knowledge.uploadDone', { count: r.uploaded }), r.failed ? 'info' : 'success')
+      await loadDocs(uploadCollection); get('/knowledge/stats').then(setStats).catch(() => {})
+      setUploadFiles([])
+    } catch (e: any) { toast(e.message, 'error') }
+    finally { setUploading(false) }
+  }
 
   return (
     <div className="mx-auto max-w-[1600px]">
       <PageHeader icon={<BookOpen className="h-5 w-5" />} title={t('knowledge.title')} subtitle={t('knowledge.subtitle')}
         actions={<>
           <Button variant="outline" size="sm" onClick={() => { void loadCollections(); void loadDocs() }}><RefreshCw className="h-3.5 w-3.5" />{t('common.refresh')}</Button>
-          {can('knowledge:write') && <Button size="sm" onClick={() => setCollOpen(true)}><Plus className="h-4 w-4" />{t('knowledge.newCollection')}</Button>}
+          {can('knowledge:write') && <Button variant="outline" size="sm" onClick={() => setCollOpen(true)}><Plus className="h-4 w-4" />{t('knowledge.newCollection')}</Button>}
+          {can('knowledge:write') && <Button size="sm" onClick={openUpload}><UploadCloud className="h-4 w-4" />{t('knowledge.upload')}</Button>}
         </>} />
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -143,9 +182,13 @@ export default function Knowledge() {
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-xs font-medium">{d.title}</p>
                         <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{d.content_preview || d.content?.slice(0, 160)}</p>
-                        <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
-                          <Badge variant="muted">{d.status}</Badge><span>{t('knowledge.chunks')}: {d.chunk_count ?? 0}</span>
-                          <span>·</span><span>{formatDate(d.created_at, locale)}</span>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                          <Badge variant="muted">{d.status}</Badge>
+                          {d.file_type && <Badge variant="secondary" className="font-mono text-[9px]">{d.file_label || d.file_type}</Badge>}
+                          {d.parse_status && d.parse_status !== 'manual' && <Badge variant={d.parse_status === 'parsed' || d.parse_status === 'ocr' ? 'success' : 'outline'} className="font-mono text-[9px]">{d.parse_status}</Badge>}
+                          <span>{t('knowledge.chunks')}: {d.chunk_count ?? 0}</span>
+                          {!!d.file_size && <span>· {(d.file_size / 1024).toFixed(1)} KB</span>}
+                          <span>· {formatDate(d.created_at, locale)}</span>
                         </div>
                       </div>
                       <div className="flex shrink-0 gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
@@ -220,11 +263,69 @@ export default function Knowledge() {
         footer={<><Button variant="outline" onClick={() => setViewOpen(false)}>{t('common.close')}</Button>
           <Button variant="destructive" onClick={() => setConfirmDelete(true)} disabled={!can('knowledge:write')}><Trash2 className="h-3.5 w-3.5" />{t('common.delete')}</Button></>}>
         <div className="space-y-3">
-          <div className="flex gap-2 text-[11px] text-muted-foreground"><Badge variant="muted">{activeDoc?.status}</Badge>
-            <span>{t('knowledge.chunks')}: {activeDoc?.chunks?.length ?? 0}</span><span>·</span><span>{activeDoc?.source}</span></div>
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Badge variant="muted">{activeDoc?.status}</Badge>
+          {activeDoc?.file_type && <Badge variant="secondary" className="font-mono text-[9px]">{activeDoc.file_label || activeDoc.file_type}</Badge>}
+          <span>{t('knowledge.chunks')}: {activeDoc?.chunks?.length ?? 0}</span><span>·</span><span>{activeDoc?.source}</span>
+          {activeDoc?.file_name && <span>· {activeDoc.file_name}</span>}
+        </div>
+        {activeDoc?.parse_error && <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-2 text-[10px] text-destructive">{activeDoc.parse_error}</p>}
           <pre className="scroll-thin max-h-80 whitespace-pre-wrap rounded-lg border bg-muted/30 p-3 text-xs leading-relaxed">{activeDoc?.content}</pre>
         </div>
       </Dialog>
+      <Dialog open={uploadOpen} onOpenChange={setUploadOpen} title={t('knowledge.uploadTitle')} size="lg"
+        footer={<><Button variant="outline" onClick={() => setUploadOpen(false)}>{t('common.close')}</Button>
+          <Button onClick={() => void doUpload()} disabled={uploading || !uploadFiles.length || !uploadCollection}>
+            <FileUp className="h-3.5 w-3.5" />{uploading ? t('knowledge.uploading') : t('knowledge.uploadNow')}</Button></>}>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={t('knowledge.collections')}><select className="h-9 w-full rounded-md border bg-background px-2 text-xs"
+              value={uploadCollection} onChange={(e) => setUploadCollection(Number(e.target.value))}>
+              {collections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select></Field>
+            <Field label={t('knowledge.uploadTitleOptional')}><Input value={uploadTitle} onChange={(e) => setUploadTitle(e.target.value)} placeholder="…" /></Field>
+          </div>
+          <div onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); chooseFiles(e.dataTransfer.files) }}
+            className={cn('flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors',
+              dragOver ? 'border-primary bg-primary/5' : 'border-border')}>
+            <UploadCloud className="h-6 w-6 text-primary" />
+            <p className="text-xs font-medium">{t('knowledge.dropzone')}</p>
+            <p className="text-[10px] text-muted-foreground">{t('knowledge.dropzoneHint', {
+              count: formats?.total ?? 0, size: Math.round((formats?.max_file_bytes || 20 * 1024 * 1024) / 1024 / 1024) })}</p>
+            <label className="cursor-pointer rounded-md border px-3 py-1.5 text-[11px] font-medium hover:bg-accent">
+              {t('knowledge.chooseFiles')}
+              <input type="file" multiple className="hidden" onChange={(e) => chooseFiles(e.target.files)} />
+            </label>
+          </div>
+          {!!uploadFiles.length && <div className="space-y-1">
+            {uploadFiles.map((f, i) => <div key={`${f.name}-${i}`} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11px]">
+              <FileText className="h-3 w-3 text-primary" /><span className="min-w-0 flex-1 truncate">{f.name}</span>
+              <span className="font-mono text-[9px] text-muted-foreground">{(f.size / 1024).toFixed(1)} KB</span>
+              <Button variant="ghost" size="icon-sm" onClick={() => setUploadFiles((p) => p.filter((_, j) => j !== i))}><XCircle className="h-3 w-3 text-destructive" /></Button>
+            </div>)}
+          </div>}
+          {!!uploadResults.length && <div className="space-y-1">
+            <p className="text-[11px] font-medium">{t('knowledge.uploadResults')}</p>
+            {uploadResults.map((r, i) => <div key={i} className="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11px]">
+              {r.ok ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
+              <span className="min-w-0 flex-1 truncate">{r.file_name}</span>
+              <span className="font-mono text-[9px] text-muted-foreground">{r.ok ? `${r.chars} chars · ${r.chunks} chunks` : r.error}</span>
+            </div>)}
+          </div>}
+          {formats && <details className="rounded-lg border px-3 py-2">
+            <summary className="cursor-pointer text-[11px] font-medium">{t('knowledge.supportedFormats')} ({formats.total})</summary>
+            <div className="mt-2 space-y-1.5">
+              {formats.groups.map((g) => <div key={g.kind} className="flex flex-wrap items-center gap-1">
+                <span className="w-20 shrink-0 font-mono text-[9px] uppercase text-muted-foreground">{g.kind}</span>
+                {g.items.map((f) => <Badge key={f.ext} variant="outline" className="font-mono text-[9px]">{f.ext}</Badge>)}
+              </div>)}
+            </div>
+          </details>}
+        </div>
+      </Dialog>
+
       <ConfirmDialog open={confirmDelete} onOpenChange={setConfirmDelete} title={t('common.confirmDelete')} onConfirm={deleteDoc} />
     </div>
   )
