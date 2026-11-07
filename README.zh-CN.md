@@ -31,7 +31,7 @@ English: [README.md](README.md) · 后端：[backend/README.zh-CN.md](backend/RE
 | **可视化表单设计** | 15 种字段类型、点击添加、拖拽排序、字段属性编辑（名称/键/必填/占位/选项/宽度/校验）、实时预览与真实校验、草稿/发布/归档、提交记录 |
 | **可视化流程编排** | 可拖拽 DAG 画布 + 贝塞尔连线，9 种节点（开始/结束/表单/条件/审批/AI/知识/HTTP/通知），连线模式、条件分支、节点配置面板、缩放、自动布局、图校验（环检测）、执行引擎、实例日志 |
 | **RESTful 接口** | `/api/v1` 下约 70 个接口，Pydantic 请求/响应模型，自动生成 `/docs`，统一错误码，所有写操作记录审计日志 |
-| **MCP** | 基于 `fastmcp` 的真实 streamable HTTP 服务 `/mcp`（initialize / tools/list / tools/call / resources / prompts），12 个平台工具，并内置零依赖 JSON-RPC 降级实现；支持注册第三方 `http`/`sse`/`stdio` MCP 服务、同步工具目录、REST 调用 |
+| **MCP** | 基于 `fastmcp` 的真实 streamable HTTP 服务 `/mcp`（initialize / tools/list / tools/call / resources / prompts），12 个平台工具，并内置零依赖 JSON-RPC 降级实现；第三方 `http`/`sse`/`stdio` 技能支持可安装目录、安装/启用/禁用/卸载/重装、可编辑技能文件与磁盘镜像、同步工具目录、REST 调用，以及含统计图表与 CSV 导出的**调用日记** |
 | **AI 智能体** | `query` / `act` / `hybrid` 三类智能体，兼容 AgentScope 的 ReAct 工具循环，RAG  grounding、会话持久化、来源引用、工具调用步骤可见；`mock` / `openai-compatible` / `agentscope` 三种后端（默认离线可用） |
 | **知识库** | 集合、文档、自动分块、中英混合 BM25 检索（单字 + 双字 gram）、上下文组装、检索测试台 |
 | **RBAC** | 用户、角色、25 项细粒度权限、角色×权限矩阵、接口级 `Depends(require("x:y"))` 校验、内置 admin/developer/operator/viewer 角色 |
@@ -55,7 +55,7 @@ ai-lowcode-platform/
 │   │   ├── seed.py            确定性演示数据
 │   │   ├── mcp_server.py      fastmcp 工具 + 内置 JSON-RPC 降级
 │   │   ├── routers/           auth, rbac, forms, workflows, knowledge, agents, mcp, audit, meta
-│   │   └── services/          workflow_engine, rag, llm, mcp_tools, sso
+│   │   └── services/          workflow_engine, rag, llm, mcp_tools, mcp_journal, skill_catalog, skill_files, sso
 │   └── tests/smoke.py         47 项端到端 API 断言
 └── frontend/                   Vite + React + TS 单页应用
     └── src/
@@ -113,7 +113,7 @@ chmod +x scripts/*.sh
 2. **流程编排** → 打开 `leave_approval` → 拖动节点、用 **Connect** 连线 → **Validate** → **Run** 输入 `{"days": 5}` → 观察条件分支（true → 总监审批）。
 3. **知识库** → 检索测试输入 `请假制度 leave policy` → 查看 BM25 命中与组装上下文。
 4. **AI 智能体** → 打开 *AI Copilot* → 询问 `List all forms and show platform statistics` → 查看真实工具调用与结果；再问 `What is the leave policy?` 得到带引用的答案。
-5. **MCP 技能** → 浏览 12 个平台工具 → 通过 REST **Invoke** → 对已注册服务 **Sync tools**。
+5. **MCP 技能** → 从**技能目录**安装技能 → **查看文件**并编辑 `config.json` → 禁用 / 重装 → 打开**调用日记**查看记录、筛选并导出 CSV。
 6. **认证设置** → 启用某个 SSO 提供方、修改 MFA 策略（对某角色强制 OTP），再到 **设置** 页扫码绑定 OTP 或添加通行密钥。
 7. 顶栏切换 **EN/中文** 与主题（system/light/dark）。
 
@@ -175,9 +175,10 @@ MCP 工具：`list_forms`、`get_form`、`submit_form`、`query_records`、`list
 | [系统架构设计](docs/architecture.zh-CN.md)（[English](docs/architecture.md)） | C4 上下文/容器/组件视图、请求管线、运行时流程、部署、质量属性、需求可追溯 |
 | [AI 系统设计](docs/ai-design.zh-CN.md)（[English](docs/ai-design.md)） | LLM 运行时与降级、ReAct 编排、统一工具注册表、RAG/BM25、MCP 暴露、Prompt 规范、安全边界、生产升级路径 |
 | [安全架构](docs/security.md) | JWT/PBKDF2/TOTP/WebAuthn、25 项 RBAC 权限、SSO、MFA 策略、审计、威胁模型 |
-| [数据模型](docs/data-model.md) | 17 张表、4 个索引、JSON 列、ER 图、种子数据 |
-| [REST 与 MCP 接口规范](docs/api-reference.md) | 全部 67 个 OpenAPI 路径、MCP 方法、12 个工具 Schema、调用示例 |
-| [ADR 索引](docs/adr/README.md) | 6 份已接受的架构决策记录与模板 |
+| [数据模型](docs/data-model.md) | 19 张表、7 个索引、JSON 列、ER 图、种子数据、惰性迁移 |
+| [REST 与 MCP 接口规范](docs/api-reference.md) | 全部 80 个 OpenAPI 路径、MCP 方法、12 个工具 Schema、调用示例 |
+| [MCP 技能与调用日记](docs/mcp-skills.md) | 技能生命周期、可编辑技能文件、调用日记、来源与权限 |
+| [ADR 索引](docs/adr/README.md) | 7 份已接受的架构决策记录与模板 |
 
 真实界面截图：[`docs/screenshots/`](docs/screenshots/)。
 
@@ -195,7 +196,7 @@ pnpm typecheck && pnpm build
 pnpm check:i18n                         # 中英文案键一致性
 ```
 
-冒烟测试包含 47 项断言：认证/RBAC（含 403 拒绝）、表单发布/校验/提交、DAG 校验与两条条件分支、RAG 索引、智能体工具循环、MCP 握手/工具列举/调用、SSO 演示建号、MFA 注册、审计日志、SPA 托管与 API 404 处理。
+冒烟测试包含 69 项断言：认证/RBAC（含 403 拒绝）、表单发布/校验/提交、DAG 校验与两条条件分支、RAG 索引、智能体工具循环、MCP 握手/工具列举/调用、SSO 演示建号、MFA 注册、审计日志、SPA 托管与 API 404 处理，以及 MCP 调用日记（记录、统计、CSV 导出、清空）与技能完整生命周期（安装、文件增删查改、路径穿越拒绝、启用/禁用/卸载/重装）。
 
 ---
 

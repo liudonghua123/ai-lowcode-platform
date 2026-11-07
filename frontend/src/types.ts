@@ -77,6 +77,35 @@ export interface McpSkill {
   command?: string; enabled: boolean; auth_config: Record<string, unknown>
   tools: { name: string; description?: string; inputSchema?: unknown }[]
   health: string; last_sync_at?: string; created_at?: string
+  status: 'installed' | 'disabled' | 'uninstalled' | 'error'
+  version?: string; source?: string; description?: string
+  manifest?: Record<string, unknown>; installed_at?: string
+  file_count?: number
+}
+export interface SkillFile {
+  id: number; skill_id: number; path: string; content?: string
+  language: string; size: number; updated_at: string
+}
+export interface CatalogSkill {
+  code: string; name: string; type: string; version: string
+  description: string; endpoint?: string; command?: string
+  capabilities: string[]; tool_count: number; file_count: number
+  files: string[]; installed: boolean; status: string
+}
+export interface McpCall {
+  id: number; request_id?: string; method: string; tool?: string
+  source: string; transport?: string; actor?: string
+  arguments: Record<string, unknown>; status: string
+  error?: string; result?: unknown; duration_ms: number
+  created_at: string
+}
+export interface CallStats {
+  total: number; success: number; errors: number; success_rate: number
+  avg_duration_ms: number; today: number
+  by_tool: { name: string; count: number; errors: number; avg_ms: number }[]
+  by_source: { source: string; count: number }[]
+  timeline: { day: string; count: number; errors: number }[]
+  sources: string[]; statuses: string[]; tools: string[]
 }
 export interface AuthProvider {
   id?: number; code: string; type: string; name: string; enabled: boolean

@@ -33,7 +33,8 @@ def version():
 
 @router.get("/stats", summary="Dashboard statistics")
 def stats(_user: dict = Depends(deps.require("dashboard:view"))):
-    data = mcp_tools.call_tool("get_stats", {})
+    # Internal dashboard aggregation — not an MCP invocation, skip the journal.
+    data = mcp_tools.call_tool("get_stats", {}, journal=False)
     data["recent_instances"] = db.q(
         "SELECT id,workflow_id,status,started_by,started_at FROM workflow_instances "
         "ORDER BY id DESC LIMIT 5")

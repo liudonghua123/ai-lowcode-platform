@@ -69,7 +69,7 @@ flowchart LR
         SEC["Security layer<br/>JWT · PBKDF2 · TOTP<br/>WebAuthn · RBAC"]
         HOST["SPA static host<br/>frontend/dist fallback"]
     end
-    DB[(SQLite<br/>WAL · 17 tables)]
+    DB[(SQLite<br/>WAL · 19 tables)]
     FS[("dist/ static assets")]
 
     SPA -->|JSON + Bearer| API
@@ -86,7 +86,7 @@ flowchart LR
 | Container | Responsibility | Technology |
 | --- | --- | --- |
 | SPA | All UI, visual designers, i18n, theming | Vite 6, React 18, TypeScript, Tailwind 3, shadcn/ui-style components, lucide-react |
-| REST layer | 67 OpenAPI paths, Pydantic models, error semantics | FastAPI 0.128+, `APIRouter`, `Depends` |
+| REST layer | 80 OpenAPI paths, Pydantic models, error semantics | FastAPI 0.128+, `APIRouter`, `Depends` |
 | MCP server | MCP `initialize` / `tools/list` / `tools/call` / resources / prompts | `fastmcp` 4.1.6 `http_app(path="/mcp")`, builtin JSON-RPC fallback |
 | Service layer | Pure business logic, no HTTP concerns | Python modules in `app/services/` |
 | Security layer | Identity, tokens, password/MFA, permission checks | stdlib `hashlib`/`hmac`, HS256 JWT, `contextvars` |
@@ -260,7 +260,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | --- | --- | --- |
 | Visual form design | Metadata-driven designer | `routers/forms.py`, `pages/Forms.tsx` |
 | Visual workflow orchestration | DAG validator + engine | `services/workflow_engine.py`, `pages/Workflows.tsx` |
-| REST API | Versioned routers | `routers/*.py` (84 route decorators → 67 OpenAPI paths) |
+| REST API | Versioned routers | `routers/*.py` (107 route decorators → 80 OpenAPI paths) |
 | MCP + third-party skills | Dual-transport MCP + registry | `mcp_server.py`, `routers/mcp.py` |
 | AI query/act agents | ReAct + tool registry + RAG | `services/llm.py`, `services/rag.py` |
 | Knowledge base | BM25 + chunking | `services/rag.py`, `routers/knowledge.py` |

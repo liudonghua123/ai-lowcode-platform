@@ -274,6 +274,14 @@ The system prompt is assembled deterministically in `run_agent()`:
 
 `mcp_skills` records external servers (`http` / `sse` / `stdio`), their config and synced tool lists. `POST /api/v1/mcp/skills/{id}/sync` refreshes tool catalogs; the registry UI and `/mcp/status` expose mode, tool count and provider state. Platform tools and third-party skills are kept in separate namespaces.
 
+### 9.5 Skill lifecycle and editable files
+
+`mcp_skills` now carries a `status` state machine (`installed` / `disabled` / `uninstalled` / `error`), `version`, `source`, `manifest` and install timestamps. `GET /mcp/skills/catalog` exposes five installable templates; `POST /mcp/skills/install` materializes a skill plus five editable files in `mcp_skill_files`, mirrored to `data/skills/<code>/`. `enable` / `disable` / `uninstall` / `reinstall` and full file CRUD (with path-traversal validation) are available from the UI. See [MCP-001](mcp-skills.md) and [ADR-0007](adr/0007-mcp-skill-lifecycle-and-journal.md).
+
+### 9.6 Call journal
+
+`mcp_call_logs` records every tool invocation across `mcp`, `rest`, `agent` and `internal` sources. `mcp_tools.call_tool()` writes arguments, result preview, status, error and duration in a `finally` block (best-effort), while the ASGI middleware buffers the JSON-RPC body once to log non-tool methods such as `initialize` and `tools/list`. `GET /mcp/calls`, `/calls/stats`, `/calls/export`, `/calls/{id}` and `DELETE /mcp/calls` power the journal dashboard. Internal dashboard aggregation passes `journal=False` to avoid noise.
+
 ## 10. Governance and safety boundary
 
 | Risk | Mitigation |
@@ -308,10 +316,11 @@ The system prompt is assembled deterministically in `run_agent()`:
 - `sources[]` — retrieval evidence with BM25 score.
 - `audit_logs` — actor/action/resource/detail/ip/level/timestamp for writes.
 - `conversations` — persisted chat history.
+- `mcp_call_logs` — every tool invocation with source, arguments, result preview, status and duration (journal dashboard, CSV export).
 
 ## 13. Test coverage
 
-`backend/tests/smoke.py` includes dedicated AI assertions: RAG search with mixed zh/en query, document auto-indexing, query agent returning `sources`, act/hybrid agents executing ≥2 real tool calls, tool-result summarization, `tools/list` and `tools/call` over `/mcp`, REST `/mcp/invoke`, third-party skill sync, and RBAC denial for tool calls. Total: **47 passed / 0 failed**.
+`backend/tests/smoke.py` includes dedicated AI assertions: RAG search with mixed zh/en query, document auto-indexing, query agent returning `sources`, act/hybrid agents executing ≥2 real tool calls, tool-result summarization, `tools/list` and `tools/call` over `/mcp`, REST `/mcp/invoke`, third-party skill sync, and RBAC denial for tool calls. Total: **69 passed / 0 failed**. The call journal and skill lifecycle add 22 assertions (recording, statistics, CSV export, clearing, catalog, install, file CRUD, path traversal, enable/disable/uninstall/reinstall).
 
 ## 14. Production upgrade path
 

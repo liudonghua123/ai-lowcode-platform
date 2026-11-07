@@ -274,6 +274,14 @@ $$\text{IDF}(t)=\ln\left(1+\frac{N-\text{df}(t)+0.5}{\text{df}(t)+0.5}\right)$$
 
 `mcp_skills` 记录外部服务（`http` / `sse` / `stdio`）、配置与已同步的工具列表。`POST /api/v1/mcp/skills/{id}/sync` 刷新工具目录；管理界面与 `/mcp/status` 展示模式、工具数与 Provider 状态。平台工具与第三方技能保持命名空间隔离。
 
+### 9.5 技能生命周期与可编辑文件
+
+`mcp_skills` 新增 `status` 状态机（`installed` / `disabled` / `uninstalled` / `error`）、`version`、`source`、`manifest` 与安装时间戳。`GET /mcp/skills/catalog` 提供 5 个可安装模板；`POST /mcp/skills/install` 安装技能并在 `mcp_skill_files` 中生成 5 个可编辑文件，同时镜像到 `data/skills/<code>/`。界面支持 `enable` / `disable` / `uninstall` / `reinstall` 以及完整的文件增删查改（含路径穿越校验）。详见 [MCP-001](mcp-skills.md) 与 [ADR-0007](adr/0007-mcp-skill-lifecycle-and-journal.md)。
+
+### 9.6 调用日记
+
+`mcp_call_logs` 记录 `mcp`、`rest`、`agent`、`internal` 四类来源的每次工具调用。`mcp_tools.call_tool()` 在 `finally` 中写入参数、结果预览、状态、错误与耗时（尽力而为，不影响调用）；ASGI 中间件一次性缓冲 JSON-RPC 请求体，以记录 `initialize`、`tools/list` 等非工具方法。`GET /mcp/calls`、`/calls/stats`、`/calls/export`、`/calls/{id}` 与 `DELETE /mcp/calls` 支撑日记看板。内部仪表盘聚合通过 `journal=False` 避免产生噪音。
+
 ## 10. 治理与安全边界
 
 | 风险 | 缓解措施 |
@@ -308,10 +316,11 @@ $$\text{IDF}(t)=\ln\left(1+\frac{N-\text{df}(t)+0.5}{\text{df}(t)+0.5}\right)$$
 - `sources[]` — 带 BM25 分数的检索证据。
 - `audit_logs` — 写操作的 actor/action/resource/detail/ip/level/timestamp。
 - `conversations` — 持久化对话历史。
+- `mcp_call_logs` — 每次工具调用的来源、参数、结果预览、状态与耗时（日记看板、CSV 导出）。
 
 ## 13. 测试覆盖
 
-`backend/tests/smoke.py` 含专门的 AI 断言：中英混合 RAG 检索、文档自动索引、query 智能体返回 `sources`、act/hybrid 智能体执行 ≥2 次真实工具调用、工具结果摘要、`/mcp` 的 `tools/list` 与 `tools/call`、REST `/mcp/invoke`、第三方技能同步，以及工具调用的 RBAC 拒绝。合计 **47 passed / 0 failed**。
+`backend/tests/smoke.py` 含专门的 AI 断言：中英混合 RAG 检索、文档自动索引、query 智能体返回 `sources`、act/hybrid 智能体执行 ≥2 次真实工具调用、工具结果摘要、`/mcp` 的 `tools/list` 与 `tools/call`、REST `/mcp/invoke`、第三方技能同步，以及工具调用的 RBAC 拒绝。合计 **69 passed / 0 failed**（调用日记与技能生命周期新增 22 项断言：记录、统计、CSV 导出、清空、目录、安装、文件增删查改、路径穿越、启用/禁用/卸载/重装）。
 
 ## 14. 生产升级路径
 

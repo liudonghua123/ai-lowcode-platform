@@ -11,9 +11,10 @@ This directory contains the platform's **standard design and architecture docume
 | `ARC-001` | [architecture.md](architecture.md) · [中文](architecture.zh-CN.md) | EN / 中文 | C4 context–container–component views, request pipeline, runtime sequences, deployment, quality attributes, traceability |
 | `AI-001` | [ai-design.md](ai-design.md) · [中文](ai-design.zh-CN.md) | EN / 中文 | **AI system design**: LLM runtime, ReAct orchestration, unified tool registry, RAG/BM25, MCP exposure, prompt spec, safety boundary, upgrade path |
 | `SEC-001` | [security.md](security.md) | EN (中文摘要) | Identity/JWT, PBKDF2, TOTP, WebAuthn, MFA policy, 25 RBAC permissions, SSO, audit, threat model, production checklist |
-| `DAT-001` | [data-model.md](data-model.md) | EN (中文摘要) | 17 tables, 4 indexes, JSON columns, ER diagram, data-access helpers, seed data, migration notes |
-| `API-001` | [api-reference.md](api-reference.md) | EN (中文摘要) | REST conventions, all **67 OpenAPI paths**, MCP methods, 12 tool schemas, examples |
-| `ADR-*` | [adr/README.md](adr/README.md) | EN | 6 accepted architecture decision records + ADR template and conventions |
+| `DAT-001` | [data-model.md](data-model.md) | EN (中文摘要) | 19 tables, 7 indexes, JSON columns, ER diagram, data-access helpers, seed data, migration notes |
+| `API-001` | [api-reference.md](api-reference.md) | EN (中文摘要) | REST conventions, all **80 OpenAPI paths**, MCP methods, 12 tool schemas, examples |
+| `MCP-001` | [mcp-skills.md](mcp-skills.md) | EN (中文摘要) | Skill install/enable/disable/uninstall lifecycle, editable skill files, MCP call journal, sources and RBAC |
+| `ADR-*` | [adr/README.md](adr/README.md) | EN | 7 accepted architecture decision records + ADR template and conventions |
 | — | [README.md](../README.md) · [中文](../README.zh-CN.md) | EN / 中文 | Project overview, quick start, demo accounts, screenshots |
 | — | [backend/README.md](../backend/README.md) · [中文](../backend/README.zh-CN.md) | EN / 中文 | Backend runbook, endpoints, security, configuration |
 | — | [frontend/README.md](../frontend/README.md) · [中文](../frontend/README.zh-CN.md) | EN / 中文 | Frontend pages, layout, design system, i18n/theme, data flow |

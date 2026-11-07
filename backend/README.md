@@ -15,7 +15,7 @@ uv run uvicorn app.main:app --reload --port 8000
 - REST: `http://localhost:8000/api/v1` · OpenAPI: `/docs` · MCP: `http://localhost:8000/mcp`
 - If `../frontend/dist` exists it is served at `/` (single-port mode).
 - The database at `data/platform.db` is created and seeded on first boot. Delete it to re-seed.
-- Smoke test: `python tests/smoke.py` (47 assertions, no external services required).
+- Smoke test: `python tests/smoke.py` (69 assertions, no external services required).
 
 ## Layout
 
@@ -35,6 +35,9 @@ app/
     rag.py             zh/en tokenizer, chunking, BM25 retrieval, context assembly
     llm.py             mock / OpenAI-compatible / AgentScope chat + ReAct loop
     sso.py             CAS, OAuth2, OIDC, WeCom, DingTalk providers
+    mcp_journal.py     call journal persistence, queries, stats, CSV export data
+    skill_catalog.py   installable skill templates + default file generator
+    skill_files.py     editable skill files, path validation, disk mirror
 ```
 
 ## REST endpoints (prefix `/api/v1`)
@@ -51,7 +54,7 @@ app/
 | Workflows | `GET /workflows/node-types`, `GET|POST /workflows`, `GET|PUT|DELETE /workflows/{id}`, `POST /workflows/{id}/validate`, `/run`, `GET /workflows/{id}/instances`, `GET /workflows/instances/{id}` |
 | Knowledge | `GET|POST|PUT|DELETE /knowledge/collections[/{id}]`, `GET|POST|PUT|DELETE /knowledge/documents[/{id}]`, `POST /knowledge/documents/{id}/reindex`, `POST /knowledge/search`, `GET /knowledge/stats` |
 | Agents | `GET /agents/meta/runtime`, `GET|POST|PUT|DELETE /agents[/{id}]`, `POST /agents/{id}/chat`, `GET|DELETE /agents/conversations[/{id}]` |
-| MCP | `GET /mcp/tools`, `/mcp/status`, `GET|POST|PUT|DELETE /mcp/skills[/{id}]`, `POST /mcp/skills/{id}/sync`, `POST /mcp/invoke` |
+| MCP | `GET /mcp/tools`, `/mcp/status`, `GET|POST|PUT|DELETE /mcp/skills[/{id}]`, `/mcp/skills/catalog`, `/mcp/skills/install`, `/mcp/skills/{id}/{enable,disable,uninstall,reinstall,sync}`, `/mcp/skills/{id}/files[/...]`, `/mcp/calls[/stats,/export,{id}]`, `POST /mcp/invoke` |
 | Audit / meta | `GET /audit/logs`, `/audit/actions`, `GET /meta/health`, `/meta/version`, `/meta/stats`, `/meta/bootstrap`, `GET|PUT /settings` |
 
 Every mutating endpoint writes an audit log; every route is protected by `Depends(deps.require(permission))`.
@@ -65,6 +68,10 @@ Tools are declared once in `services/mcp_tools.py` and reused by the MCP server,
 `list_forms`, `get_form`, `submit_form`, `query_records`, `list_workflows`, `get_workflow`, `run_workflow`, `get_workflow_instance`, `list_collections`, `search_knowledge`, `list_users`, `get_stats`.
 
 Third-party MCP servers are registered in the `mcp_skills` table (`builtin` / `http` / `sse` / `stdio`); `POST /mcp/skills/{id}/sync` probes the endpoint with `initialize` + `tools/list` and refreshes its tool catalog. Bearer tokens on `/mcp` are bound to the tool context by a pure-ASGI middleware so tool calls are RBAC-checked.
+
+**Skill lifecycle.** `GET /mcp/skills/catalog` lists five ready-to-install templates; `POST /mcp/skills/install` materializes a skill plus five editable files (`SKILL.md`, `manifest.json`, `config.json`, `tools.json`, `README.md`) in `mcp_skill_files` and mirrors them to `data/skills/<code>/`. `enable` / `disable` / `uninstall` / `reinstall` manage the `status` state machine; uninstall removes files but keeps the registry entry. File CRUD lives under `/mcp/skills/{id}/files/{path}`, with path-traversal validation and `POST .../files/reload` to re-read the disk mirror.
+
+**Call journal.** `mcp_call_logs` records every tool invocation (MCP `tools/call`, REST `invoke`, agent tool steps) and every non-tool JSON-RPC method. The ASGI middleware tags the context with `source`/`actor`/`request_id` and buffers the request body once; `mcp_tools.call_tool()` writes arguments, result preview, status, error and duration in a `finally` block so failures are logged too. `GET /mcp/calls` (filters), `/calls/stats` (aggregates), `/calls/export` (CSV), `/calls/{id}` and `DELETE /calls` are guarded by `mcp:read` / `mcp:write`. See [MCP Skills & Call Journal](../docs/mcp-skills.md).
 
 ## Auth & security model
 

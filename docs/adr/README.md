@@ -12,6 +12,7 @@ This directory records **significant, hard-to-reverse architectural decisions** 
 | [0004](0004-sqlite-and-local-bm25.md) | SQLite persistence and in-process BM25 retrieval | Accepted | Data / retrieval |
 | [0005](0005-mcp-transport-and-auth.md) | fastmcp streamable HTTP with fallback and ASGI auth binding | Accepted | MCP / integration |
 | [0006](0006-rbac-mfa-and-sso.md) | Declarative RBAC with policy-driven MFA and demo-capable SSO | Accepted | Security |
+| [0007](0007-mcp-skill-lifecycle-and-journal.md) | Skill lifecycle, editable skill files and MCP call journal | Accepted | MCP / observability |
 
 Referenced from [ARC-001 §11](../architecture.md) and [AI-001 §15](../ai-design.md).
 

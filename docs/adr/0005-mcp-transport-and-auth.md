@@ -22,7 +22,8 @@ Additionally, MCP clients are external processes — identity must be attached w
 - **Lifespan integration:** `main.py` enters `async with mcp_http_app.lifespan(mcp_http_app): yield` inside the FastAPI lifespan, then extends `app.router.routes` with the returned routes.
 - **Fallback transport:** `build_mcp()` catches any fastmcp failure and returns a dependency-free JSON-RPC ASGI route implementing `initialize`, `ping`, `tools/list`, `tools/call`, `resources/*`, `prompts/*` and notifications. MCP keeps working even without the optional SDK.
 - **Authentication:** `MCPAuthASGIMiddleware` is a **pure ASGI** wrapper (not `BaseHTTPMiddleware`) that, for `/mcp` requests, decodes an optional bearer token, loads the user and calls `mcp_tools.bind_user(user)`. Tool calls then pass through `PERMISSION_MAP`. Anonymous read-only use remains possible.
-- **Third-party skills:** `mcp_skills` table + `/mcp/skills` CRUD and `/mcp/skills/{id}/sync`, kept in a separate namespace from platform tools.
+- **Third-party skills:** `mcp_skills` table + `/mcp/skills` CRUD and `/mcp/skills/{id}/sync`, kept in a separate namespace from platform tools. A later revision added an installable catalog, `install`/`enable`/`disable`/`uninstall`/`reinstall`, editable skill files (`mcp_skill_files` + disk mirror) and a full call journal (`mcp_call_logs`); see [ADR-0007](0007-mcp-skill-lifecycle-and-journal.md).
+- **Call journal:** the ASGI middleware buffers the JSON-RPC body once (replaying it to the transport) to log non-tool methods, while `mcp_tools.call_tool()` logs every tool invocation with arguments, result preview, status and duration. Sources are `mcp`, `rest`, `agent` and `internal`; writes are best-effort so journaling can never break a tool call.
 
 ## Consequences
 

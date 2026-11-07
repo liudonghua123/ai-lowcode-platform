@@ -168,7 +168,39 @@ CREATE TABLE IF NOT EXISTS mcp_skills (
   tools TEXT NOT NULL DEFAULT '[]',
   health TEXT NOT NULL DEFAULT 'unknown',
   last_sync_at TEXT,
+  created_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'installed',
+  version TEXT NOT NULL DEFAULT '1.0.0',
+  source TEXT NOT NULL DEFAULT 'manual',
+  description TEXT NOT NULL DEFAULT '',
+  manifest TEXT NOT NULL DEFAULT '{}',
+  installed_at TEXT,
+  updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS mcp_call_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_id TEXT,
+  method TEXT NOT NULL DEFAULT 'tools/call',
+  tool TEXT,
+  source TEXT NOT NULL DEFAULT 'mcp',
+  transport TEXT,
+  actor TEXT,
+  arguments TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'success',
+  error TEXT,
+  result_preview TEXT,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mcp_skill_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  skill_id INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  language TEXT NOT NULL DEFAULT 'text',
+  size INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  UNIQUE(skill_id, path)
 );
 CREATE TABLE IF NOT EXISTS audit_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -206,7 +238,24 @@ CREATE INDEX IF NOT EXISTS idx_submissions_form ON form_submissions(form_id);
 CREATE INDEX IF NOT EXISTS idx_instances_wf ON workflow_instances(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_kbdocs_collection ON kb_documents(collection_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_calls_created ON mcp_call_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_calls_tool ON mcp_call_logs(tool);
+CREATE INDEX IF NOT EXISTS idx_skill_files_skill ON mcp_skill_files(skill_id);
 """
+
+# Columns added after the first release. SQLite cannot add them through
+# CREATE TABLE IF NOT EXISTS on an existing database, so we migrate lazily.
+MIGRATIONS: dict[str, dict[str, str]] = {
+    "mcp_skills": {
+        "status": "TEXT NOT NULL DEFAULT 'installed'",
+        "version": "TEXT NOT NULL DEFAULT '1.0.0'",
+        "source": "TEXT NOT NULL DEFAULT 'manual'",
+        "description": "TEXT NOT NULL DEFAULT ''",
+        "manifest": "TEXT NOT NULL DEFAULT '{}'",
+        "installed_at": "TEXT",
+        "updated_at": "TEXT",
+    },
+}
 
 
 def now() -> str:
@@ -308,9 +357,19 @@ def dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _migrate() -> None:
+    """Add columns introduced after the initial schema (idempotent)."""
+    for table, columns in MIGRATIONS.items():
+        existing = {row["name"] for row in q(f"PRAGMA table_info({table})")}
+        for column, ddl in columns.items():
+            if column not in existing:
+                run(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 def init_db() -> None:
     conn().executescript(SCHEMA)
     conn().commit()
+    _migrate()
 
 
 def is_empty() -> bool:

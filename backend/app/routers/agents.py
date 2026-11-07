@@ -155,6 +155,8 @@ async def chat(agent_id: int, body: ChatIn, user: dict = Depends(deps.require("a
         if conv and (conv.get("user_id") in (user["username"], None) or user["is_admin"]):
             history = (db.loads(conv, "messages") or {}).get("messages") or []
     mcp_tools.bind_user(user)
+    mcp_tools.bind_context(source="agent", transport="react", method="agent.tool",
+                           actor=user["username"], request_id=db.uid()[:12])
     result = await llm.run_agent(agent, body.message, history, user)
     messages = history + [
         {"role": "user", "content": body.message},
