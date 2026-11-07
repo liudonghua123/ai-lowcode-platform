@@ -48,7 +48,7 @@ src/
                            table.tsx
   components/layout/       AppShell.tsx (侧边栏、顶栏、主题/语言切换、用户菜单)
   components/              PageHeader.tsx, Charts.tsx (SVG 图表、统计卡片、环形图)
-  i18n/                    locales.ts (每种语言 635 个叶子键), index.tsx (provider + t())
+  i18n/                    locales.ts (每种语言 651 个叶子键), index.tsx (provider + t())
   theme/ThemeProvider.tsx  system/light/dark，监听 prefers-color-scheme
   store/AppContext.tsx     session、/meta/bootstrap 目录、can(permission)
   lib/                     api.ts (fetch 客户端 + 401 处理), utils.ts, webauthn.ts

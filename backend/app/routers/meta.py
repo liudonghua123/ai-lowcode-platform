@@ -1,7 +1,8 @@
 """Platform metadata, bootstrap catalogs, dashboard stats and settings."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from .. import __version__, db, deps, security
 from ..config import settings
@@ -116,3 +117,34 @@ def put_settings(body: dict, user: dict = Depends(deps.require("settings:write")
            (db.dumps(merged), db.now()))
     deps.audit(user["username"], "settings.update", "settings", merged, request=request)
     return {"settings": merged}
+
+
+class AiSettingsItem(BaseModel):
+    category: str
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    enabled: bool | None = None
+
+
+class AiSettingsIn(BaseModel):
+    items: list[AiSettingsItem] = Field(default_factory=list)
+
+
+@settings_router.get("/ai", summary="AI model services, initial values bootstrapped from .env")
+def get_ai_settings(_user: dict = Depends(deps.require("settings:read"))):
+    return model_providers.settings_view()
+
+
+@settings_router.put("/ai", summary="Save the default AI model service of each category")
+def put_ai_settings(body: AiSettingsIn, user: dict = Depends(deps.require("settings:write")),
+                    request: Request = None):
+    try:
+        result = model_providers.save_settings(
+            [item.model_dump(exclude_none=True) for item in body.items])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    deps.audit(user["username"], "settings.ai.update", "ai_providers",
+               {"categories": [item.category for item in body.items],
+                "saved": result.get("saved", 0)}, request=request)
+    return result

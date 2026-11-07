@@ -9,7 +9,7 @@
 | Machine-readable source | `GET /openapi.json`, interactive UI at `GET /docs` |
 | Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Security Architecture](security.md) · [Data Model](data-model.md) |
 
-> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **96 个 OpenAPI 路径 / 131 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 12 个平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank 多类别模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
+> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **97 个 OpenAPI 路径 / 133 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 12 个平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank 多类别模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
 
 ## 1. Conventions
 
@@ -42,7 +42,7 @@
 }
 ```
 
-## 2. REST endpoints (96 paths)
+## 2. REST endpoints (97 paths)
 
 ### 2.1 Authentication & MFA — `/auth`
 
@@ -197,6 +197,7 @@ See [MCP Servers, Skills & Call Journal](mcp-skills.md) for the two registries, 
 | GET | `/meta/health`, `/meta/version` | public |
 | GET | `/meta/bootstrap`, `/meta/stats` | authenticated / `dashboard:view` |
 | GET, PUT | `/settings` | `settings:read` / `settings:write` |
+| GET, PUT | `/settings/ai` | `settings:read` / `settings:write` |
 
 ## 3. MCP endpoint `/mcp`
 
@@ -272,4 +273,4 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/jso
 - All business endpoints are versioned under `/api/v1`; breaking changes require a new prefix.
 - MCP protocol version is negotiated during `initialize` (no hard-coded client requirement).
 - `/openapi.json` is the authoritative machine-readable contract; regenerate this table when routers change.
-- `scripts/smoke.py` (110 assertions) exercises the critical subset of these endpoints end-to-end.
+- `scripts/smoke.py` (116 assertions) exercises the critical subset of these endpoints end-to-end.

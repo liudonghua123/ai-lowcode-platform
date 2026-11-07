@@ -98,7 +98,7 @@ erDiagram
 | `mcp_skills` | `id`, `code` (unique), `name`, `type`, `endpoint`, `command`, `enabled`, `status` (`installed`/`disabled`/`uninstalled`/`error`), `version`, `source`, `description`, `manifest` **JSON**, `auth_config` **JSON**, `tools` **JSON**, `health`, `last_sync_at`, `installed_at`, `server_id` (nullable link), timestamps | Independent Skill registry + lifecycle state |
 | `mcp_call_logs` | `id`, `request_id`, `method`, `tool`, `source` (`mcp`/`rest`/`agent`/`internal`), `transport`, `actor`, `arguments` **JSON**, `status`, `error`, `result_preview`, `target`, `duration_ms`, `created_at` | Every tool invocation and JSON-RPC method; `target` records `server:<code>` |
 | `mcp_skill_files` | `id`, `skill_id`, `path` (unique per skill), `content`, `language`, `size`, `updated_at` | Editable skill files; mirrored to `data/skills/<code>/` |
-| `ai_providers` | `id`, `code` (unique), `name`, `category` (`llm`/`asr`/`tts`/`embedding`/`rerank`/`vision`), `vendor`, `base_url`, `api_key`, `model`, `enabled`, `is_default`, `config` **JSON**, `description`, timestamps | Runtime model-service configs; `api_key` never returned in full |
+| `ai_providers` | `id`, `code` (unique), `name`, `category` (`llm`/`asr`/`tts`/`embedding`/`rerank`/`vision`), `vendor`, `base_url`, `api_key`, `model`, `enabled`, `is_default`, `config` **JSON**, `description`, timestamps | Runtime model-service configs; `api_key` never returned in full; `config.env_managed` marks rows still bootstrapped from `.env` |
 | `audit_logs` | `id`, `actor`, `action`, `resource`, `detail` **JSON**, `ip`, `level`, `created_at` | Indexed by `created_at DESC` |
 | `settings` | `key` (PK), `value` **JSON**, `updated_at` | Runtime overrides (MFA policy, i18n/theme defaults) |
 

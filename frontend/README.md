@@ -48,7 +48,7 @@ src/
                            table.tsx
   components/layout/       AppShell.tsx (sidebar, header, theme/locale switches, user menu)
   components/              PageHeader.tsx, Charts.tsx (SVG chart, stat cards, donut)
-  i18n/                    locales.ts (635 leaf keys per locale), index.tsx (provider + t())
+  i18n/                    locales.ts (651 leaf keys per locale), index.tsx (provider + t())
   theme/ThemeProvider.tsx  system/light/dark with prefers-color-scheme listener
   store/AppContext.tsx     session, /meta/bootstrap catalogs, can(permission)
   lib/                     api.ts (fetch client + 401 handling), utils.ts, webauthn.ts

@@ -335,7 +335,7 @@ MCP 服务与技能是**独立实体，各自拥有路由、数据表与生命�
 
 ## 13. 测试覆盖
 
-`backend/tests/smoke.py` 含专门的 AI 断言：中英混合 RAG 检索、文档自动索引、query 智能体返回 `sources`、act/hybrid 智能体执行 ≥2 次真实工具调用、工具结果摘要、`/mcp` 的 `tools/list` 与 `tools/call`、REST `/mcp/invoke`、第三方技能同步，以及工具调用的 RBAC 拒绝。合计 **110 passed / 0 failed**（调用日记与技能生命周期新增 63 项断言：记录、统计、CSV 导出、清空、目录、安装、文件增删查改、路径穿越、启用/禁用/卸载/重装）。
+`backend/tests/smoke.py` 含专门的 AI 断言：中英混合 RAG 检索、文档自动索引、query 智能体返回 `sources`、act/hybrid 智能体执行 ≥2 次真实工具调用、工具结果摘要、`/mcp` 的 `tools/list` 与 `tools/call`、REST `/mcp/invoke`、第三方技能同步，以及工具调用的 RBAC 拒绝。合计 **116 passed / 0 failed**（调用日记与技能生命周期新增 63 项断言：记录、统计、CSV 导出、清空、目录、安装、文件增删查改、路径穿越、启用/禁用/卸载/重装）。
 
 ## 14. 生产升级路径
 

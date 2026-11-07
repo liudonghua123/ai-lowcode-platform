@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import QRCode from 'qrcode'
 import { useNavigate } from 'react-router-dom'
 import {
-  BookOpen, CheckCircle2, Copy, ExternalLink, Fingerprint, KeyRound, Languages,
-  LockKeyhole, LogOut, Monitor, Moon, RefreshCw, Save, Settings2, ShieldCheck,
-  Sun, Trash2, UserRound, UsersRound,
+  ArrowRight, BookOpen, CheckCircle2, Copy, DownloadCloud, ExternalLink, Eye,
+  Fingerprint, KeyRound, Languages, Layers, ListFilter, LockKeyhole, LogOut,
+  Mic, Monitor, Moon, RefreshCw, Save, Settings2, ShieldCheck, Sparkles, Sun,
+  Trash2, UserRound, UsersRound, Volume2,
 } from 'lucide-react'
 import { PageHeader, SectionTitle } from '@/components/PageHeader'
 import {
@@ -18,6 +19,24 @@ import { useApp } from '@/store/AppContext'
 import { del, get, post, put } from '@/lib/api'
 import { copyText } from '@/lib/utils'
 import { registerPasskey } from '@/lib/webauthn'
+import type { AiSettingsView, ModelCategory } from '@/types'
+
+type AiDraft = { base_url: string; model: string; api_key: string; enabled: boolean }
+
+const CATEGORY_ICONS: Record<ModelCategory, ReactNode> = {
+  llm: <Sparkles className="h-3.5 w-3.5" />,
+  asr: <Mic className="h-3.5 w-3.5" />,
+  tts: <Volume2 className="h-3.5 w-3.5" />,
+  embedding: <Layers className="h-3.5 w-3.5" />,
+  rerank: <ListFilter className="h-3.5 w-3.5" />,
+  vision: <Eye className="h-3.5 w-3.5" />,
+}
+
+function draftOf(view: AiSettingsView): Record<string, AiDraft> {
+  return Object.fromEntries(view.categories.map((c) => [c.category, {
+    base_url: c.base_url, model: c.model, api_key: '', enabled: c.enabled,
+  }])) as Record<string, AiDraft>
+}
 
 export default function Settings() {
   const { t, locale, setLocale } = useI18n()
@@ -33,6 +52,10 @@ export default function Settings() {
   const [platformSettings, setPlatformSettings] = useState<any>(null)
   const [health, setHealth] = useState<any>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [ai, setAi] = useState<AiSettingsView | null>(null)
+  const [aiDraft, setAiDraft] = useState<Record<string, AiDraft>>({})
+  const [aiSaving, setAiSaving] = useState(false)
+  const canWrite = can('settings:write')
 
   const load = async () => {
     try {
@@ -43,6 +66,10 @@ export default function Settings() {
       ])
       setCredentials(c.credentials || []); setPlatformSettings(s.settings || null); setHealth(h)
     } catch { /* optional */ }
+    try {
+      const r = await get<AiSettingsView>('/settings/ai')
+      setAi(r); setAiDraft(draftOf(r))
+    } catch { /* requires settings:read */ }
   }
   useEffect(() => { void load() }, [])
 
@@ -84,6 +111,27 @@ export default function Settings() {
   const savePlatform = async () => {
     try { await put('/settings', platformSettings); toast(t('common.saved'), 'success') }
     catch (e: any) { toast(e.message, 'error') }
+  }
+  const saveAi = async () => {
+    if (!ai) return
+    setAiSaving(true)
+    try {
+      const r = await put<AiSettingsView>('/settings/ai', {
+        items: ai.categories.map((c) => ({ category: c.category, ...(aiDraft[c.category] || {}) })),
+      })
+      setAi(r); setAiDraft(draftOf(r)); toast(t('common.saved'), 'success')
+    } catch (e: any) { toast(e.message, 'error') }
+    finally { setAiSaving(false) }
+  }
+  const loadAiEnv = () => {
+    if (!ai) return
+    setAiDraft(Object.fromEntries(ai.categories.map((c) => [c.category, {
+      base_url: c.env.base_url || c.base_url,
+      model: c.env.model || c.model,
+      api_key: '',
+      enabled: c.env.configured ? true : c.enabled,
+    }])) as Record<string, AiDraft>)
+    toast(t('settings.aiEnvLoaded'), 'success')
   }
 
   const appearance = [
@@ -212,6 +260,84 @@ export default function Settings() {
           </CardContent></Card>}
         </div>
       </div>
+
+      {ai && <Card className="mt-4"><CardContent className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <SectionTitle>{t('settings.aiTitle')}</SectionTitle>
+            <p className="mt-1 max-w-3xl text-[11px] leading-relaxed text-muted-foreground">{t('settings.aiHint')}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="font-mono text-[9px]">
+              {t('settings.aiRuntime')}: {ai.runtime.provider} · {ai.runtime.model}
+            </Badge>
+            <Button variant="outline" size="sm" onClick={loadAiEnv} disabled={!canWrite}>
+              <DownloadCloud className="h-3.5 w-3.5" />{t('settings.aiLoadEnv')}
+            </Button>
+            <Button size="sm" onClick={saveAi} disabled={!canWrite || aiSaving}>
+              <Save className="h-3.5 w-3.5" />{t('common.save')}
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {ai.categories.map((c) => {
+            const draft: AiDraft = aiDraft[c.category] || {
+              base_url: c.base_url, model: c.model, api_key: '', enabled: c.enabled,
+            }
+            const set = (patch: Partial<AiDraft>) =>
+              setAiDraft((prev) => ({ ...prev, [c.category]: { ...draft, ...patch } }))
+            return (
+              <div key={c.category} className="rounded-xl border p-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-primary">{CATEGORY_ICONS[c.category]}</span>
+                  <p className="text-xs font-medium">{locale === 'zh' ? c.label_zh : c.label}</p>
+                  <Badge variant={c.source === 'env' ? 'secondary' : c.source === 'manual' ? 'default' : 'outline'}
+                    className="ml-auto text-[9px]">
+                    {c.source === 'env' ? t('settings.aiSourceEnv')
+                      : c.source === 'manual' ? t('settings.aiSourceManual') : t('settings.aiSourceNone')}
+                  </Badge>
+                  <Switch checked={draft.enabled} disabled={!canWrite}
+                    onCheckedChange={(v) => set({ enabled: v })} />
+                </div>
+                <div className="mt-2 space-y-1.5">
+                  <Input className="h-8 font-mono text-[10px]"
+                    placeholder={c.vendor === 'local' ? 'n/a' : (c.env.base_url || 'https://api.openai.com/v1')}
+                    value={draft.base_url} disabled={!canWrite}
+                    onChange={(e) => set({ base_url: e.target.value })} />
+                  <Input className="h-8 font-mono text-[10px]" placeholder={c.env.model || c.default_model}
+                    value={draft.model} disabled={!canWrite}
+                    onChange={(e) => set({ model: e.target.value })} />
+                  <Input className="h-8 font-mono text-[10px]" type="password" autoComplete="new-password"
+                    placeholder={c.has_api_key
+                      ? `${t('settings.aiKeySet')} · ${c.api_key_masked}`
+                      : t('settings.aiKeyMissing')}
+                    value={draft.api_key} disabled={!canWrite}
+                    onChange={(e) => set({ api_key: e.target.value })} />
+                </div>
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  {c.env.configured
+                    ? <p className="truncate text-[10px] text-muted-foreground">
+                      {t('settings.aiEnvConfigured', { model: c.env.model || c.env.base_url })}</p>
+                    : <span />}
+                  {c.source === 'manual' && !c.ready && (
+                    <span className="shrink-0 text-[10px] text-amber-600 dark:text-amber-400">
+                      {t('settings.aiIncomplete')}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="font-mono text-[10px] text-muted-foreground">backend/.env → {ai.runtime.config_source}</p>
+          <Button variant="ghost" size="sm" onClick={() => navigate('/models')}>
+            {t('settings.aiManage')}<ArrowRight className="h-3 w-3" />
+          </Button>
+        </div>
+      </CardContent></Card>}
 
       <Dialog open={otpOpen} onOpenChange={setOtpOpen} title={t('settings.otpEnable')}
         description={t('settings.otpHint')} size="sm"

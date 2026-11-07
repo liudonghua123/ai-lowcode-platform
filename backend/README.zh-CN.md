@@ -15,7 +15,7 @@ uv run uvicorn app.main:app --reload --port 8000
 - REST：`http://localhost:8000/api/v1` · OpenAPI：`/docs` · MCP：`http://localhost:8000/mcp`
 - 若 `../frontend/dist` 存在，会由 `/` 直接托管前端（单端口模式）。
 - 首次启动自动创建并填充 `data/platform.db`；删除该文件可重新初始化。
-- 冒烟测试：`python tests/smoke.py`（110 项断言，不依赖外部服务）。
+- 冒烟测试：`python tests/smoke.py`（116 项断言，不依赖外部服务）。
 
 ## 目录
 

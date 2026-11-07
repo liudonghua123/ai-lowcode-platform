@@ -8,6 +8,10 @@ echo "==> Building frontend"
 
 cd "$ROOT/backend"
 PY="python3"
-if [ -x ".venv/bin/python" ]; then PY=".venv/bin/python"; fi
+# Prefer the project venv, but only when it actually has the runtime deps
+# installed; a bare `uv venv` stub would otherwise fail at import time.
+if [ -x ".venv/bin/python" ] && .venv/bin/python -c "import uvicorn" 2>/dev/null; then
+  PY=".venv/bin/python"
+fi
 echo "==> Serving http://localhost:8000  (REST /api/v1, MCP /mcp, SPA /)"
 exec "$PY" -m uvicorn app.main:app --host 0.0.0.0 --port 8000

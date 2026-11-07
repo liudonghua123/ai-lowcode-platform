@@ -97,7 +97,26 @@ SEED_ROWS = [
      "vendor": "local", "base_url": "", "model": "none",
      "is_default": 1, "enabled": 0,
      "description": "Retrieval results are returned in BM25 / vector score order."},
+    {"code": "default-vision", "name": "OpenAI-compatible Vision", "category": "vision",
+     "vendor": "openai", "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini",
+     "is_default": 1, "enabled": 0,
+     "description": "Multimodal endpoint for image and scanned-document understanding."},
 ]
+
+# ``.env`` is the source of the initial value of every category. Attribute
+# names on ``config.Settings`` mirror the environment variables, so the mapping
+# below is all that is needed to read them back.
+ENV_FIELDS: dict[str, tuple[str, str, str]] = {
+    "llm": ("llm_base_url", "llm_api_key", "llm_model"),
+    "asr": ("asr_base_url", "asr_api_key", "asr_model"),
+    "tts": ("tts_base_url", "tts_api_key", "tts_model"),
+    "embedding": ("embedding_base_url", "embedding_api_key", "embedding_model"),
+    "rerank": ("rerank_base_url", "rerank_api_key", "rerank_model"),
+    "vision": ("vision_base_url", "vision_api_key", "vision_model"),
+}
+
+_SEED_BY_CATEGORY = {row["category"]: row for row in SEED_ROWS}
+_ENV_MANAGED = "env_managed"
 
 
 def mask(key: str | None) -> str:
@@ -150,6 +169,200 @@ def default_for(category: str, *, enabled_only: bool = False) -> dict | None:
         "SELECT * FROM ai_providers WHERE category=? AND is_default=1"
         + (" AND enabled=1" if enabled_only else "") + " LIMIT 1", (category,))
     return _out(row)
+
+
+def env_values(category: str) -> dict:
+    """Raw ``.env`` bootstrap values for one category (internal use only)."""
+    base_attr, key_attr, model_attr = ENV_FIELDS[category]
+    return {
+        "base_url": (getattr(settings, base_attr) or "").strip(),
+        "api_key": (getattr(settings, key_attr) or "").strip(),
+        "model": (getattr(settings, model_attr) or "").strip(),
+    }
+
+
+def env_defaults() -> dict[str, dict]:
+    """Client-safe (masked) view of the ``.env`` bootstrap values."""
+    out: dict[str, dict] = {}
+    for category in CATEGORY_CODES:
+        raw = env_values(category)
+        out[category] = {
+            "base_url": raw["base_url"],
+            "model": raw["model"],
+            "has_api_key": bool(raw["api_key"]),
+            "api_key_masked": mask(raw["api_key"]),
+            "configured": bool(raw["base_url"] and raw["api_key"]),
+        }
+    return out
+
+
+def _env_enabled(category: str, env: dict, row: dict) -> int | None:
+    """Decide the enabled flag implied by ``.env``.
+
+    ``None`` means "leave the stored flag alone".
+    """
+    vendor = row.get("vendor") or ""
+    base = env["base_url"] or row.get("base_url") or ""
+    if env["api_key"] and base:
+        return 1
+    if vendor == "local":
+        return 1 if (row.get("model") or "") not in {"", "none"} else None
+    if category == "llm":
+        return None  # the mock provider works without credentials
+    if category in {"asr", "tts", "vision", "rerank"}:
+        return 0
+    return None
+
+
+def _default_row(category: str) -> dict | None:
+    row = db.q1("SELECT * FROM ai_providers WHERE category=? AND is_default=1 LIMIT 1",
+                (category,))
+    if row is None:
+        row = db.q1("SELECT * FROM ai_providers WHERE category=? ORDER BY id LIMIT 1",
+                    (category,))
+    return row
+
+
+def _fallback_spec(category: str) -> dict:
+    meta = CATEGORIES[category]
+    return {"code": f"default-{category}", "name": f"Default {meta['label']}",
+            "category": category, "vendor": "custom", "base_url": "", "model": "",
+            "enabled": 0, "is_default": 1, "description": ""}
+
+
+def bootstrap_from_env(now: str | None = None) -> dict:
+    """Apply ``.env`` as the initial value of every model-service category.
+
+    Runs on every startup. Rows that were edited from the UI are marked
+    ``env_managed: false`` and are therefore never overwritten by a restart.
+    """
+    now = now or db.now()
+    created = refreshed = 0
+    for category in CATEGORY_CODES:
+        env = env_values(category)
+        spec = _SEED_BY_CATEGORY.get(category) or _fallback_spec(category)
+        row = _default_row(category)
+        if row is None:
+            db.insert("ai_providers", {
+                **spec,
+                "base_url": env["base_url"] or spec.get("base_url", ""),
+                "model": env["model"] or spec.get("model", ""),
+                "api_key": env["api_key"],
+                "enabled": _env_enabled(category, env, spec) or 0,
+                "config": {_ENV_MANAGED: True, "env_applied_at": now},
+                "created_at": now, "updated_at": now,
+            })
+            created += 1
+            continue
+        cfg = (db.loads(row, "config") or {}).get("config") or {}
+        if cfg.get(_ENV_MANAGED) is False:
+            continue
+        patch: dict[str, Any] = {}
+        if env["base_url"] and env["base_url"] != row["base_url"]:
+            patch["base_url"] = env["base_url"]
+        if env["model"] and env["model"] != row["model"]:
+            patch["model"] = env["model"]
+        if env["api_key"] and env["api_key"] != row["api_key"]:
+            patch["api_key"] = env["api_key"]
+        enabled = _env_enabled(category, env, row)
+        if enabled is not None and int(bool(row["enabled"])) != enabled:
+            patch["enabled"] = enabled
+        # A row that was never edited is environment-managed even when its
+        # values already match .env — record the marker so later saves detach it.
+        if patch or _ENV_MANAGED not in cfg:
+            patch["config"] = {**cfg, _ENV_MANAGED: True, "env_applied_at": now}
+            patch["updated_at"] = now
+            db.update("ai_providers", row["id"], patch)
+            refreshed += 1
+    return {"created": created, "refreshed": refreshed}
+
+
+def settings_view() -> dict:
+    """One row per category, prefilled from the stored default or ``.env``."""
+    env = env_defaults()
+    items: list[dict] = []
+    for category in CATEGORY_CODES:
+        meta = CATEGORIES[category]
+        row = _default_row(category)
+        view = _out(row)
+        cfg = ((db.loads(row, "config") or {}).get("config") or {}) if row else {}
+        env_managed = bool(cfg.get(_ENV_MANAGED))
+        base_url = (view or {}).get("base_url") or env[category]["base_url"]
+        model = (view or {}).get("model") or env[category]["model"] or meta["default_model"]
+        has_key = bool((view or {}).get("has_api_key") or env[category]["has_api_key"])
+        vendor = (view or {}).get("vendor") or "custom"
+        ready = bool(has_key and base_url) or (
+            vendor == "local" and model not in {"", "none"}) or (
+            category == "llm" and settings.llm_provider == "mock")
+        items.append({
+            "category": category, "label": meta["label"], "label_zh": meta["label_zh"],
+            "default_model": meta["default_model"],
+            "provider_id": (view or {}).get("id"),
+            "provider_code": (view or {}).get("code"),
+            "provider_name": (view or {}).get("name"),
+            "vendor": vendor,
+            "enabled": bool((view or {}).get("enabled")),
+            "base_url": base_url, "model": model,
+            "has_api_key": has_key,
+            "api_key_masked": (view or {}).get("api_key_masked", ""),
+            "env_managed": env_managed,
+            "source": "env" if env_managed else ("manual" if view else "none"),
+            "ready": ready,
+            "env": env[category],
+        })
+    runtime = effective_llm()
+    return {
+        "categories": items,
+        "runtime": {"provider": runtime["provider"], "model": runtime["model"],
+                    "base_url": runtime["base_url"],
+                    "config_source": runtime["source"],
+                    "temperature": runtime["temperature"],
+                    "has_api_key": bool(runtime["api_key"])},
+    }
+
+
+def save_settings(items: list[dict]) -> dict:
+    """Persist the Settings-page edits onto each category's default row."""
+    now = db.now()
+    saved = 0
+    for item in items:
+        category = item.get("category")
+        if category not in CATEGORIES:
+            raise ValueError(f"category must be one of {', '.join(CATEGORY_CODES)}")
+        spec = _SEED_BY_CATEGORY.get(category) or _fallback_spec(category)
+        row = _default_row(category)
+        if row is None:
+            db.insert("ai_providers", {
+                **spec,
+                "base_url": str(item.get("base_url") or "").strip(),
+                "model": str(item.get("model") or spec.get("model") or "").strip(),
+                "api_key": str(item.get("api_key") or "").strip(),
+                "enabled": int(bool(item.get("enabled", True))),
+                "config": {_ENV_MANAGED: False},
+                "created_at": now, "updated_at": now,
+            })
+            saved += 1
+            continue
+        patch: dict[str, Any] = {}
+        for field in ("base_url", "model"):
+            if field in item:
+                value = str(item.get(field) or "").strip()
+                if value != (row.get(field) or ""):
+                    patch[field] = value
+        key = str(item.get("api_key") or "").strip()
+        if key and key != mask(row.get("api_key")):
+            patch["api_key"] = key
+        if item.get("enabled") is not None:
+            flag = int(bool(item["enabled"]))
+            if flag != int(bool(row.get("enabled"))):
+                patch["enabled"] = flag
+        if patch:
+            cfg = db.loads(row, "config") or {}
+            patch["config"] = {**cfg, _ENV_MANAGED: False}
+            patch["updated_at"] = now
+            db.update("ai_providers", row["id"], patch)
+            saved += 1
+    return {**settings_view(), "saved": saved}
 
 
 def effective_llm() -> dict:
@@ -218,6 +431,10 @@ def update(provider_id: int, body: dict) -> dict:
         raise ValueError("Provider not found")
     data = _normalize(body, existing)
     data.pop("code", None)  # immutable identity
+    # Editing connection details detaches the row from ``.env`` bootstrapping.
+    if {"base_url", "api_key", "model", "enabled"} & set(data):
+        cfg = (db.loads(existing, "config") or {}).get("config") or {}
+        data["config"] = {**cfg, **(data.get("config") or {}), _ENV_MANAGED: False}
     data["updated_at"] = db.now()
     db.update("ai_providers", provider_id, data)
     if data.get("is_default"):
@@ -295,6 +512,7 @@ def meta() -> dict:
     return {
         "categories": [{"code": k, **v, "count": counts.get(k, 0)} for k, v in CATEGORIES.items()],
         "vendors": VENDORS, "defaults": defaults,
+        "env": env_defaults(),
         "total": int(db.scalar("SELECT COUNT(*) FROM ai_providers") or 0),
         "effective_llm": {k: v for k, v in effective_llm().items() if k != "api_key"}
         | {"has_api_key": bool(effective_llm()["api_key"])},

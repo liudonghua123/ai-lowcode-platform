@@ -62,6 +62,8 @@ The first release read LLM settings exclusively from `LLM_*` environment variabl
 | `DELETE /ai/providers/{id}` | `settings:write` | Delete; promotes another row to default if needed |
 | `POST /ai/providers/{id}/default` | `settings:write` | Make it the sole default of its category (also sets `enabled=1`) |
 | `POST /ai/providers/{id}/test` | `mcp:read` | Static validation, optional live probe |
+| `GET /settings/ai` | `settings:read` | Compact per-category view, prefilled from the default provider or `.env` |
+| `PUT /settings/ai` | `settings:write` | Save the default provider of one or more categories at once |
 
 Reads use `mcp:read` so the same viewer/operator roles that can see the MCP pages can see model metadata; all writes require `settings:write`. Mutations emit `ai.provider.create|update|delete|default|test` audit entries.
 
@@ -92,23 +94,32 @@ On `PUT`, sending an empty string **or the masked value** means "keep the stored
 
 `services/llm.py` calls `effective_llm()` in `describe()`, `_http_chat()`, `_agentscope_chat()`, `chat()` and `run_agent()`, so `GET /agents/meta/runtime` reports the actual provider/model/source. An agent's own `model` field still takes precedence for the request. Knowledge `/stats` reports the configured `embedding` and `rerank` defaults.
 
-## 7. Seed defaults and frontend
+## 7. Seed defaults, `.env` bootstrap and frontend
 
-`seed.ensure_registries()` runs on **every startup** and idempotently provisions five default rows:
+`seed.ensure_registries()` runs on **every startup** and idempotently provisions one default row per category, then calls `model_providers.bootstrap_from_env()`:
 
-| Code | Category | Model | Enabled |
-| --- | --- | --- | --- |
-| `default-llm` | `llm` | *(empty → env)* | yes |
-| `default-asr` | `asr` | `whisper-1` | no |
-| `default-tts` | `tts` | `tts-1` | no |
-| `default-embedding` | `embedding` | `bm25-local` | yes |
-| `default-rerank` | `rerank` | `none` | no |
+| Code | Category | Initial model | `.env` source | Enabled |
+| --- | --- | --- | --- | --- |
+| `default-llm` | `llm` | `gpt-4o-mini` | `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | yes (mock works without a key) |
+| `default-asr` | `asr` | `whisper-1` | `ASR_BASE_URL` / `ASR_API_KEY` / `ASR_MODEL` | only with URL + key |
+| `default-tts` | `tts` | `tts-1` | `TTS_BASE_URL` / `TTS_API_KEY` / `TTS_MODEL` | only with URL + key |
+| `default-embedding` | `embedding` | `bm25-local` | `EMBEDDING_BASE_URL` / `EMBEDDING_API_KEY` / `EMBEDDING_MODEL` | yes (local) |
+| `default-rerank` | `rerank` | `none` | `RERANK_BASE_URL` / `RERANK_API_KEY` / `RERANK_MODEL` | only with URL + key |
+| `default-vision` | `vision` | `gpt-4o-mini` | `VISION_BASE_URL` / `VISION_API_KEY` / `VISION_MODEL` | only with URL + key |
 
-`vision` has no seed default. `frontend/src/pages/ModelProviders.tsx` renders one tab per category with provider cards, default/test/edit/delete/create actions, masked keys and the runtime metadata from `/ai/providers/meta`. Agents can pick an `llm` provider from a dropdown in their configuration.
+**Bootstrap contract.** `bootstrap_from_env()` reads `config.settings` (which `python-dotenv` fills from `backend/.env` and the repository-root `.env`) and writes non-empty values onto the category's default row. A row is only touched while `config.env_managed` is not `false`:
+
+- rows created by the seed start as `env_managed: true`;
+- saving from Settings or editing `base_url` / `api_key` / `model` / `enabled` through `/ai/providers` sets `env_managed: false`;
+- therefore a restart re-applies `.env` to untouched categories and **never overwrites values edited in the UI**.
+
+Enabled flags are derived, not copied: a category with both URL and key becomes `enabled=1`; ASR/TTS/vision/rerank without credentials stay disabled; `llm` keeps its flag because the `mock` provider needs no key.
+
+**Two frontends, one registry.** `frontend/src/pages/ModelProviders.tsx` (`/models`) is the full manager — tabs per category, multiple providers, vendor presets, default/test/delete. `frontend/src/pages/Settings.tsx` (`/settings`) embeds a compact **AI model services** card that edits only the default row of each category: `GET /settings/ai` prefills every field from the stored default (falling back to `.env`), `PUT /settings/ai` saves them, and **Load .env** re-reads the bootstrap values into the form without saving. The card also shows the runtime badge (`provider · model · config_source`) and links to `/models`.
 
 ## 8. Validation and limitations
 
-`backend/tests/smoke.py` (110 assertions) covers category metadata, vendor presets, create/update/delete, invalid category rejection, exclusive default, masked keys, key retention on masked `PUT`, `effective_llm()` overriding environment values, static/live test endpoints, and runtime metadata.
+`backend/tests/smoke.py` (116 assertions) covers category metadata, vendor presets, create/update/delete, invalid category rejection, exclusive default, masked keys, key retention on masked `PUT`, `effective_llm()` overriding environment values, static/live test endpoints, runtime metadata, the `/settings/ai` view with `.env` prefill, per-category save, unknown-category rejection, and the env-managed detach/restore cycle.
 
 **Current limitations (intentional):**
 

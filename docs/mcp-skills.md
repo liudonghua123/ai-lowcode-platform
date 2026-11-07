@@ -171,7 +171,7 @@ Tool-level authorization still uses `PERMISSION_MAP` inside `call_tool` (see ADR
 
 ## 10. Validation
 
-`backend/tests/smoke.py` — **110 assertions**, including journal recording/statistics/export/clear, catalog, install with file creation, file CRUD, path-traversal rejection, enable/disable/uninstall/reinstall and permanent delete; MCP server independent registration, sync, tools, invoke rejection, enable and delete; skill deletion leaving servers intact; agent bindings with stale-id cleanup; AI provider categories/defaults/key masking; multi-format upload and unsupported-format rejection. `POST /mcp` `initialize` / `tools/list` / `tools/call` remain 200 after the ASGI body-buffering change. `pnpm typecheck`, `pnpm build`, `pnpm check:i18n` (635 en/zh keys), `pnpm build` and `ruff check app tests` all pass.
+`backend/tests/smoke.py` — **116 assertions**, including journal recording/statistics/export/clear, catalog, install with file creation, file CRUD, path-traversal rejection, enable/disable/uninstall/reinstall and permanent delete; MCP server independent registration, sync, tools, invoke rejection, enable and delete; skill deletion leaving servers intact; agent bindings with stale-id cleanup; AI provider categories/defaults/key masking; multi-format upload and unsupported-format rejection. `POST /mcp` `initialize` / `tools/list` / `tools/call` remain 200 after the ASGI body-buffering change. `pnpm typecheck`, `pnpm build`, `pnpm check:i18n` (651 en/zh keys), `pnpm build` and `ruff check app tests` all pass.
 
 ## 11. Production considerations
 

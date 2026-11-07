@@ -13,7 +13,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app import db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services import model_providers  # noqa: E402
 
 PASSED = 0
 FAILED = 0
@@ -300,12 +302,12 @@ def main() -> int:
         check("deleting a skill leaves servers intact", c.get(
             "/api/v1/mcp/servers", headers=h).json()["total"] >= 3)
 
-        print("\n== AI model providers (llm / asr / tts / embedding / rerank) ==")
+        print("\n== AI model providers (llm / asr / tts / embedding / rerank / vision) ==")
         pmeta = c.get("/api/v1/ai/providers/meta", headers=h).json()
         check("model category metadata", len(pmeta["categories"]) >= 5
               and len(pmeta["vendors"]) >= 6)
         check("default providers seeded", all(pmeta["defaults"].get(k) for k in
-              ("llm", "asr", "tts", "embedding", "rerank")))
+              ("llm", "asr", "tts", "embedding", "rerank", "vision")))
         plist = c.get("/api/v1/ai/providers", headers=h).json()
         check("provider list masks secrets", all("api_key" not in p and "has_api_key" in p
               for p in plist["providers"]))
@@ -335,6 +337,37 @@ def main() -> int:
         check("provider config test", c.post(f"/api/v1/ai/providers/{pid}/test",
               headers=h, json={"live": False}).json()["mode"] == "configuration")
         check("delete provider", c.delete(f"/api/v1/ai/providers/{pid}", headers=h).status_code == 200)
+
+        print("\n== Settings -> AI model services (.env bootstrap) ==")
+        ai = c.get("/api/v1/settings/ai", headers=h).json()
+        cats = {i["category"]: i for i in ai["categories"]}
+        check("settings ai covers all six categories",
+              set(cats) == set(model_providers.CATEGORY_CODES))
+        check("settings ai reads initial values from env",
+              cats["llm"]["env"]["model"] == model_providers.env_values("llm")["model"]
+              and "api_key" not in cats["llm"]["env"])
+        check("settings ai marks untouched defaults as env-managed",
+              cats["llm"]["source"] == "env" and bool(cats["llm"]["base_url"]))
+        before_env = model_providers.env_values("vision")
+        saved = c.put("/api/v1/settings/ai", headers=h, json={"items": [{
+            "category": "vision", "base_url": "https://vision.example.com/v1",
+            "model": "vision-smoke", "api_key": "sk-vision-smoke-123456", "enabled": True}]})
+        vcats = {i["category"]: i for i in saved.json()["categories"]}
+        check("settings ai saves per category and detaches from env",
+              saved.status_code == 200 and vcats["vision"]["source"] == "manual"
+              and vcats["vision"]["model"] == "vision-smoke"
+              and vcats["vision"]["has_api_key"] and "api_key" not in vcats["vision"])
+        check("settings ai rejects unknown category", c.put(
+            "/api/v1/settings/ai", headers=h,
+            json={"items": [{"category": "nope"}]}).status_code == 400)
+        # Restore the demo row so the dev database keeps showing env bootstrap.
+        db.update("ai_providers", vcats["vision"]["provider_id"], {
+            "base_url": before_env["base_url"], "model": before_env["model"],
+            "api_key": before_env["api_key"], "enabled": 0,
+            "config": {"env_managed": True}})
+        restored = {i["category"]: i for i in c.get(
+            "/api/v1/settings/ai", headers=h).json()["categories"]}["vision"]
+        check("settings ai restores env-managed state", restored["source"] == "env")
 
         print("\n== RBAC / Auth / Audit ==")
         check("list users", c.get("/api/v1/rbac/users", headers=h).json()["total"] >= 4)

@@ -276,6 +276,11 @@ def ensure_registries(now: str | None = None) -> dict:
         db.insert("ai_providers", {**provider, "api_key": "", "config": {},
                                    "created_at": now, "updated_at": now})
         created["providers"] += 1
+    # ``.env`` supplies the initial value of every model-service category;
+    # rows edited from the UI are left untouched.
+    boot = model_providers.bootstrap_from_env(now)
+    created["providers"] += boot["created"]
+    created["env_refreshed"] = boot["refreshed"]
     return created
 
 

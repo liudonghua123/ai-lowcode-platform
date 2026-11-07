@@ -12,7 +12,7 @@ This directory contains the platform's **standard design and architecture docume
 | `AI-001` | [ai-design.md](ai-design.md) · [中文](ai-design.zh-CN.md) | EN / 中文 | **AI system design**: LLM runtime, ReAct orchestration, unified tool registry, RAG/BM25, MCP exposure, prompt spec, safety boundary, upgrade path |
 | `SEC-001` | [security.md](security.md) | EN (中文摘要) | Identity/JWT, PBKDF2, TOTP, WebAuthn, MFA policy, 25 RBAC permissions, SSO, audit, threat model, production checklist |
 | `DAT-001` | [data-model.md](data-model.md) | EN (中文摘要) | 21 tables, 10 indexes, JSON columns, ER diagram, data-access helpers, seed data, migration notes |
-| `API-001` | [api-reference.md](api-reference.md) | EN (中文摘要) | REST conventions, all **96 OpenAPI paths**, MCP methods, 12 tool schemas, examples |
+| `API-001` | [api-reference.md](api-reference.md) | EN (中文摘要) | REST conventions, all **97 OpenAPI paths**, MCP methods, 12 tool schemas, examples |
 | `MCP-001` | [mcp-skills.md](mcp-skills.md) | EN (中文摘要) | Independent MCP server and Skill registries, skill lifecycle, editable files, call journal, sources and RBAC |
 | `KNB-001` | [knowledge-upload.md](knowledge-upload.md) | EN (中文摘要) | Multi-format knowledge upload, parsing pipeline, format catalog, API and validation |
 | `AIM-001` | [ai-models.md](ai-models.md) | EN (中文摘要) | Six AI model categories, provider CRUD, write-only keys, defaults and runtime resolution |

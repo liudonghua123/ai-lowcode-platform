@@ -34,11 +34,11 @@ English: [README.md](README.md) · 后端：[backend/README.zh-CN.md](backend/RE
 | --- | --- |
 | **可视化表单设计** | 15 种字段类型、点击添加、拖拽排序、字段属性编辑（名称/键/必填/占位/选项/宽度/校验）、实时预览与真实校验、草稿/发布/归档、提交记录 |
 | **可视化流程编排** | 可拖拽 DAG 画布 + 贝塞尔连线，9 种节点（开始/结束/表单/条件/审批/AI/知识/HTTP/通知），连线模式、条件分支、节点配置面板、缩放、自动布局、图校验（环检测）、执行引擎、实例日志 |
-| **RESTful 接口** | `/api/v1` 下 96 个 OpenAPI 路径（131 个路由装饰器），Pydantic 请求/响应模型，自动生成 `/docs`，统一错误码，所有写操作记录审计日志 |
+| **RESTful 接口** | `/api/v1` 下 97 个 OpenAPI 路径（133 个路由装饰器），Pydantic 请求/响应模型，自动生成 `/docs`，统一错误码，所有写操作记录审计日志 |
 | **MCP** | 基于 `fastmcp` 的真实 streamable HTTP 服务 `/mcp`（initialize / tools/list / tools/call / resources / prompts），12 个平台工具外加 `call_remote_tool` 桥接工具，并内置零依赖 JSON-RPC 降级实现 |
 | **MCP 服务** | 独立的 `/mcp/servers` 注册表：`http`/`sse`/`stdio` 连接 CRUD、认证配置、探测/同步工具发现、健康与状态、启用/禁用、按服务调用工具 |
 | **技能** | 独立的 `/skills` 注册表：可安装目录、安装/启用/禁用/卸载/重装、可编辑技能文件与磁盘镜像、可选 `server_id` 关联 MCP 服务、关联服务同步 |
-| **AI 模型服务** | `/ai/providers` 配置 `llm` / `asr` / `tts` / `embedding` / `rerank` / `vision` 六类模型；每类一个默认项、API Key 只写（读取时脱敏）、连通性测试，`llm` 默认项在运行时覆盖 `LLM_*` 环境变量 |
+| **AI 模型服务** | `/ai/providers` 配置 `llm` / `asr` / `tts` / `embedding` / `rerank` / `vision` 六类模型；每类一个默认项、API Key 只写（读取时脱敏）、连通性测试，`llm` 默认项在运行时覆盖 `LLM_*` 环境变量。**设置 → AI 模型服务** 可直接改六类默认项，初始值由 `.env`（`LLM_*`、`ASR_*`、`TTS_*`、`EMBEDDING_*`、`RERANK_*`、`VISION_*`）引导 |
 | **AI 智能体** | `query` / `act` / `hybrid` 三类智能体，兼容 AgentScope 的 ReAct 工具循环，RAG grounding、会话持久化、来源引用、工具调用步骤可见；`GET /agents/meta/bindings` 让创建时可在同一搜索式对话框中绑定知识库、技能、MCP 服务与工作流（保存时清理失效 id、运行时收窄工具域）；`mock` / `openai-compatible` / `agentscope` 三种后端（默认离线可用） |
 | **知识库** | 集合、文档、自动分块、中英混合 BM25 检索（单字 + 双字 gram）、上下文组装、检索测试台，以及**多格式上传**——Markdown/TXT/CSV/JSON/YAML/HTML/XML、PDF、Word/Excel/PowerPoint（OOXML）、OpenDocument、EPUB、RTF、图片（OCR）等，上传即解析并立即索引 |
 | **调用日记** | 记录 MCP / REST / Agent / internal 每次调用的参数、结果预览、状态、错误、耗时与目标；提供统计、图表、筛选与 CSV 导出 |
@@ -67,7 +67,7 @@ ai-lowcode-platform/
 │   │   └── services/          workflow_engine, rag, llm, mcp_tools, mcp_servers,
 │   │                          model_providers, documents, mcp_journal, skill_catalog,
 │   │                          skill_files, sso
-│   └── tests/smoke.py         110 项端到端 API 断言
+│   └── tests/smoke.py         116 项端到端 API 断言
 └── frontend/                   Vite + React + TS 单页应用
     └── src/
         ├── components/ui/     shadcn 风格基础组件、对话框、Toast、表格
@@ -175,7 +175,7 @@ MCP 工具：`list_forms`、`get_form`、`submit_form`、`query_records`、`list
 
 ## 国际化与主题
 
-- **默认英文**，顶栏可切换中文（持久化到 `localStorage`）。全部文案位于 `frontend/src/i18n/locales.ts`（每种语言 635 个叶子键，已校验无缺失）。
+- **默认英文**，顶栏可切换中文（持久化到 `localStorage`）。全部文案位于 `frontend/src/i18n/locales.ts`（每种语言 651 个叶子键，已校验无缺失）。
 - **主题默认 `system`**，跟随 `prefers-color-scheme`，也可强制 light/dark。设计变量为 `frontend/src/index.css` 中的 HSL CSS 变量，遵循 shadcn/ui 约定。
 - 平台默认值（`default_locale`、`default_theme` 等）同时通过 `/api/v1/settings` 存于服务端。
 
@@ -191,7 +191,7 @@ MCP 工具：`list_forms`、`get_form`、`submit_form`、`query_records`、`list
 | [AI 系统设计](docs/ai-design.zh-CN.md)（[English](docs/ai-design.md)） | LLM 运行时与降级、ReAct 编排、统一工具注册表、RAG/BM25、MCP 暴露、Prompt 规范、安全边界、生产升级路径 |
 | [安全架构](docs/security.md) | JWT/PBKDF2/TOTP/WebAuthn、25 项 RBAC 权限、SSO、MFA 策略、审计、威胁模型 |
 | [数据模型](docs/data-model.md) | 21 张表、10 个索引、JSON 列、ER 图、种子数据、惰性迁移 |
-| [REST 与 MCP 接口规范](docs/api-reference.md) | 全部 96 个 OpenAPI 路径、MCP 方法、12 个工具 Schema、调用示例 |
+| [REST 与 MCP 接口规范](docs/api-reference.md) | 全部 97 个 OpenAPI 路径、MCP 方法、12 个工具 Schema、调用示例 |
 | [MCP 服务、技能与调用日记](docs/mcp-skills.md) | 独立注册表、技能生命周期、可编辑文件、调用日记、来源与权限 |
 | [知识库上传](docs/knowledge-upload.md) | 支持格式、解析流程、上传接口与校验 |
 | [AI 模型服务](docs/ai-models.md) | 六类模型、配置 CRUD、密钥只写、默认项与运行时解析 |
@@ -213,7 +213,7 @@ pnpm typecheck && pnpm build
 pnpm check:i18n                         # 中英文案键一致性
 ```
 
-冒烟测试包含 110 项断言：认证/RBAC（含 403 拒绝）、表单发布/校验/提交、DAG 校验与两条条件分支、RAG 索引、智能体工具循环、MCP 握手/工具列举/调用、SSO 演示建号、MFA 注册、审计日志、SPA 托管与 API 404 处理，以及 MCP 调用日记（记录、统计、CSV 导出、清空）与技能完整生命周期（安装、文件增删查改、路径穿越拒绝、启用/禁用/卸载/重装），外加拆分后的 MCP 服务/技能注册表、AI 模型服务、多格式知识库上传与智能体资源绑定。
+冒烟测试包含 116 项断言：认证/RBAC（含 403 拒绝）、表单发布/校验/提交、DAG 校验与两条条件分支、RAG 索引、智能体工具循环、MCP 握手/工具列举/调用、SSO 演示建号、MFA 注册、审计日志、SPA 托管与 API 404 处理，以及 MCP 调用日记（记录、统计、CSV 导出、清空）与技能完整生命周期（安装、文件增删查改、路径穿越拒绝、启用/禁用/卸载/重装），外加拆分后的 MCP 服务/技能注册表、AI 模型服务、多格式知识库上传与智能体资源绑定。
 
 ---
 

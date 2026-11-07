@@ -155,6 +155,24 @@ export interface AiProviderMeta {
   total: number
   effective_llm: Record<string, unknown> & { has_api_key: boolean }
 }
+export interface AiSettingsEnv {
+  base_url: string; model: string; has_api_key: boolean
+  api_key_masked: string; configured: boolean
+}
+export interface AiSettingsItem {
+  category: ModelCategory; label: string; label_zh: string; default_model: string
+  provider_id: number | null; provider_code: string | null; provider_name: string | null
+  vendor: string; enabled: boolean; base_url: string; model: string
+  has_api_key: boolean; api_key_masked: string; env_managed: boolean
+  source: 'env' | 'manual' | 'none'; ready: boolean; env: AiSettingsEnv
+}
+export interface AiSettingsView {
+  categories: AiSettingsItem[]
+  runtime: {
+    provider: string; model: string; base_url: string
+    config_source: string; temperature: number; has_api_key: boolean
+  }
+}
 export interface McpCall {
   id: number; request_id?: string; method: string; tool?: string
   source: string; transport?: string; actor?: string

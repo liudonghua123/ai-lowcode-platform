@@ -34,11 +34,11 @@ Frontend: **Vite + React + TypeScript + shadcn/ui design system** · Backend: **
 | --- | --- |
 | **Visual form designer** | 15 field types, click-to-add palette, drag-to-reorder, per-field property editor (label/key/required/placeholder/options/width/validation), live preview with real validation, draft/publish/archive, submission records |
 | **Visual workflow orchestration** | Drag-and-drop DAG canvas with bezier edges, 9 node types (start/end/form/condition/approval/AI/knowledge/HTTP/notification), connect mode, condition branches, node config panel, zoom, auto-layout, graph validation (cycle detection), execution engine, instance logs |
-| **REST API** | 96 OpenAPI paths (131 route decorators) under `/api/v1`, Pydantic request/response models, auto OpenAPI at `/docs`, consistent error codes, audit logging on every mutation |
+| **REST API** | 97 OpenAPI paths (133 route decorators) under `/api/v1`, Pydantic request/response models, auto OpenAPI at `/docs`, consistent error codes, audit logging on every mutation |
 | **MCP** | Real `fastmcp` streamable-HTTP server at `/mcp` (initialize / tools/list / tools/call / resources / prompts), 12 platform tools plus a `call_remote_tool` bridge, and a dependency-free built-in JSON-RPC fallback |
 | **MCP servers** | Independent `/mcp/servers` registry: CRUD for `http`/`sse`/`stdio` connections, auth config, probe / sync tool discovery, health & status, enable/disable and per-server tool invocation |
 | **Skills** | Independent `/skills` registry: installable catalog, install/enable/disable/uninstall/reinstall, editable skill files with disk mirror, optional `server_id` link to an MCP server, linked-server sync |
-| **AI model services** | `/ai/providers` configures `llm` / `asr` / `tts` / `embedding` / `rerank` / `vision` providers; one default per category, write-only API keys (masked on read), connectivity test, and an `llm` default that overrides `LLM_*` environment variables at runtime |
+| **AI model services** | `/ai/providers` configures `llm` / `asr` / `tts` / `embedding` / `rerank` / `vision` providers; one default per category, write-only API keys (masked on read), connectivity test, and an `llm` default that overrides `LLM_*` environment variables at runtime. **Settings → AI model services** edits the six defaults inline, with initial values bootstrapped from `.env` (`LLM_*`, `ASR_*`, `TTS_*`, `EMBEDDING_*`, `RERANK_*`, `VISION_*`) |
 | **AI agents** | `query` / `act` / `hybrid` agents, AgentScope-compatible ReAct tool loop, RAG grounding, conversation persistence, source citations, visible tool-call steps; `GET /agents/meta/bindings` lets creation bind knowledge bases, skills, MCP servers and workflows from one searchable dialog (stale ids cleaned on save, tool scope enforced at runtime); `mock` / `openai-compatible` / `agentscope` LLM backends (works offline by default) |
 | **Knowledge base** | Collections, documents, automatic chunking, mixed zh/en BM25 retrieval (unigram+bigram), assembled RAG context, retrieval test console, and **multi-format upload** — Markdown/TXT/CSV/JSON/YAML/HTML/XML, PDF, Word/Excel/PowerPoint (OOXML), OpenDocument, EPUB, RTF, images (OCR) and more, parsed and indexed immediately |
 | **Call journal** | Every MCP / REST / Agent / internal invocation recorded with arguments, result preview, status, error, duration and target; stats, charts, filters and CSV export |
@@ -175,7 +175,7 @@ Frontend: `frontend/.env.example` (`VITE_API_BASE=/api/v1`, proxied to `:8000` b
 
 ## i18n & theme
 
-- **English is the default**; switch to 中文 in the header (persisted in `localStorage`). All UI strings live in `frontend/src/i18n/locales.ts` (635 leaf keys per locale, verified complete).
+- **English is the default**; switch to 中文 in the header (persisted in `localStorage`). All UI strings live in `frontend/src/i18n/locales.ts` (651 leaf keys per locale, verified complete).
 - **Theme defaults to `system`** and follows `prefers-color-scheme`; light/dark can be forced. Design tokens are CSS HSL variables in `frontend/src/index.css`, following the shadcn/ui convention.
 - Platform defaults (`default_locale`, `default_theme`, …) are also stored server-side via `/api/v1/settings`.
 
@@ -191,7 +191,7 @@ Full design and architecture documentation lives in [`docs/`](docs/README.md):
 | [AI System Design](docs/ai-design.md) ([中文](docs/ai-design.zh-CN.md)) | LLM runtime & degradation, ReAct orchestration, unified tool registry, RAG/BM25, MCP exposure, prompt spec, safety boundary, production upgrade path |
 | [Security Architecture](docs/security.md) | JWT/PBKDF2/TOTP/WebAuthn, 25 RBAC permissions, SSO, MFA policy, audit, threat model |
 | [Data Model](docs/data-model.md) | 21 tables, 10 indexes, JSON columns, ER diagram, seed data, lazy migrations |
-| [REST & MCP API Reference](docs/api-reference.md) | All 96 OpenAPI paths, MCP methods, 12 tool schemas, examples |
+| [REST & MCP API Reference](docs/api-reference.md) | All 97 OpenAPI paths, MCP methods, 12 tool schemas, examples |
 | [MCP Servers, Skills & Call Journal](docs/mcp-skills.md) | Independent registries, skill lifecycle, editable files, invocation journal, sources and RBAC |
 | [Knowledge Upload](docs/knowledge-upload.md) | Supported formats, parsing pipeline, upload API and validation |
 | [AI Model Services](docs/ai-models.md) | Six model categories, provider CRUD, write-only keys, defaults and runtime resolution |
@@ -213,7 +213,7 @@ pnpm typecheck && pnpm build
 pnpm check:i18n                         # en/zh key parity
 ```
 
-The smoke suite covers 110 assertions: auth/RBAC (including a 403 denial), form publish/validation/submit, DAG validation and both condition branches, RAG indexing, agent tool loops, MCP handshake/tools/call, SSO demo provisioning, MFA enrollment, audit logs, SPA hosting and API 404 handling, plus the MCP call journal (recording, statistics, CSV export, clearing) and the full skill lifecycle (install, file CRUD, path traversal rejection, enable/disable/uninstall/reinstall), plus the split MCP server / Skill registries, AI model providers, multi-format knowledge upload and agent resource bindings.
+The smoke suite covers 116 assertions: auth/RBAC (including a 403 denial), form publish/validation/submit, DAG validation and both condition branches, RAG indexing, agent tool loops, MCP handshake/tools/call, SSO demo provisioning, MFA enrollment, audit logs, SPA hosting and API 404 handling, plus the MCP call journal (recording, statistics, CSV export, clearing) and the full skill lifecycle (install, file CRUD, path traversal rejection, enable/disable/uninstall/reinstall), plus the split MCP server / Skill registries, AI model providers, multi-format knowledge upload and agent resource bindings.
 
 ---
 

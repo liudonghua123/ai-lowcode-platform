@@ -86,7 +86,7 @@ flowchart LR
 | Container | Responsibility | Technology |
 | --- | --- | --- |
 | SPA | All UI, visual designers, i18n, theming | Vite 6, React 18, TypeScript, Tailwind 3, shadcn/ui-style components, lucide-react |
-| REST layer | 96 OpenAPI paths, Pydantic models, error semantics | FastAPI 0.128+, `APIRouter`, `Depends` |
+| REST layer | 97 OpenAPI paths, Pydantic models, error semantics | FastAPI 0.128+, `APIRouter`, `Depends` |
 | MCP server | MCP `initialize` / `tools/list` / `tools/call` / resources / prompts | `fastmcp` 4.1.6 `http_app(path="/mcp")`, builtin JSON-RPC fallback |
 | Service layer | Pure business logic, no HTTP concerns | Python modules in `app/services/` |
 | Security layer | Identity, tokens, password/MFA, permission checks | stdlib `hashlib`/`hmac`, HS256 JWT, `contextvars` |
@@ -204,7 +204,7 @@ sequenceDiagram
 | Agent chat | Chat → `run_agent()` (bound tool scope) → conversation turns | `conversations`, `audit_logs` |
 | MCP server registry | Server config → probe/sync → declared tools | `mcp_servers` |
 | Skill registry | Install → lifecycle → editable files → optional `server_id` link | `mcp_skills`, `mcp_skill_files` |
-| AI model providers | Category defaults → `effective_llm()` → runtime override | `ai_providers` |
+| AI model providers | `.env` bootstrap → category defaults → `effective_llm()` → runtime override; Settings card + `/models` manager | `ai_providers` |
 | Configuration | `.env` → `Settings` → runtime overrides | `settings` |
 
 All complex structures are stored as JSON text columns, transparently serialized by `db._enc/_dec` and `db.loads()`.
@@ -223,7 +223,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 
 | Concern | Implementation |
 | --- | --- |
-| i18n | 635 leaf keys per locale, default `en`, `localStorage`, `<html lang>` sync, English fallback |
+| i18n | 651 leaf keys per locale, default `en`, `localStorage`, `<html lang>` sync, English fallback |
 | Theme | `system` (default) / `light` / `dark`, `prefers-color-scheme` listener, HSL CSS variables, `meta[theme-color]` |
 | Audit | Every mutation → `audit_logs(actor, action, resource, detail, ip, level, created_at)` |
 | Configuration | `python-dotenv` → frozen `Settings`; `settings` table for runtime overrides |
@@ -269,7 +269,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | --- | --- | --- |
 | Visual form design | Metadata-driven designer | `routers/forms.py`, `pages/Forms.tsx` |
 | Visual workflow orchestration | DAG validator + engine | `services/workflow_engine.py`, `pages/Workflows.tsx` |
-| REST API | Versioned routers | `routers/*.py` (131 route decorators → 96 OpenAPI paths) |
+| REST API | Versioned routers | `routers/*.py` (133 route decorators → 97 OpenAPI paths) |
 | MCP transport + tool registry | Dual-transport MCP + single registry | `mcp_server.py`, `routers/mcp.py`, `services/mcp_tools.py` |
 | MCP servers (independent) | CRUD, probe/sync, declared tools, remote invoke | `routers/mcp_servers.py`, `services/mcp_servers.py`, `mcp_servers` |
 | Skills (independent) | Lifecycle, catalog, editable files, `server_id` link | `routers/skills.py`, `services/skill_*.py`, `mcp_skills` |
