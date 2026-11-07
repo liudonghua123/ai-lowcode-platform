@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 33% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 243 75% 56%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 20% 95%;
+    --secondary-foreground: 222 47% 20%;
+    --muted: 220 18% 95%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 245 70% 96%;
+    --accent-foreground: 243 75% 40%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 60% 40%;
+    --success-foreground: 0 0% 100%;
+    --warning: 35 92% 48%;
+    --warning-foreground: 0 0% 100%;
+    --border: 220 16% 89%;
+    --input: 220 16% 87%;
+    --ring: 243 75% 56%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 224 32% 8%;
+    --foreground: 210 30% 96%;
+    --card: 224 28% 11%;
+    --card-foreground: 210 30% 96%;
+    --popover: 224 28% 12%;
+    --popover-foreground: 210 30% 96%;
+    --primary: 245 85% 70%;
+    --primary-foreground: 224 40% 9%;
+    --secondary: 223 22% 17%;
+    --secondary-foreground: 210 30% 94%;
+    --muted: 223 22% 16%;
+    --muted-foreground: 218 12% 65%;
+    --accent: 243 35% 22%;
+    --accent-foreground: 245 85% 82%;
+    --destructive: 0 63% 48%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 55% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 35 90% 52%;
+    --warning-foreground: 0 0% 100%;
+    --border: 223 20% 21%;
+    --input: 223 20% 24%;
+    --ring: 245 85% 70%;
+  }
+
+  * { @apply border-border; }
+  html { -webkit-tap-highlight-color: transparent; }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    min-height: 100vh;
+  }
+  ::selection { background: hsl(var(--primary) / .22); }
+  input, textarea, select, button { font: inherit; }
+}
+
+@layer components {
+  .app-bg {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+    background:
+      radial-gradient(70rem 40rem at 8% -12%, hsl(var(--primary) / .10), transparent 60%),
+      radial-gradient(60rem 38rem at 100% 0%, hsl(190 90% 55% / .09), transparent 55%),
+      radial-gradient(55rem 40rem at 55% 110%, hsl(280 80% 65% / .07), transparent 60%);
+    background-size: 140% 140%;
+    animation: gradient-drift 20s ease infinite;
+  }
+  .app-bg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: .28;
+    background-image: linear-gradient(hsl(var(--border) / .55) 1px, transparent 1px),
+                      linear-gradient(90deg, hsl(var(--border) / .55) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(60% 60% at 50% 25%, black, transparent);
+  }
+  .glass-card {
+    @apply rounded-lg border bg-card/80 shadow-soft backdrop-blur-xl;
+  }
+  .card-hover {
+    @apply transition-all duration-300 hover:-translate-y-0.5 hover:shadow-glow hover:border-primary/30;
+  }
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(100deg, hsl(var(--primary)), hsl(280 75% 60%), hsl(190 85% 48%));
+  }
+  .focus-ring { @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background; }
+  .scroll-thin { scrollbar-width: thin; scrollbar-color: hsl(var(--border)) transparent; }
+  .scroll-thin::-webkit-scrollbar { width: 7px; height: 7px; }
+  .scroll-thin::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 999px; }
+  .scroll-thin::-webkit-scrollbar-track { background: transparent; }
+  .mono-num { font-variant-numeric: tabular-nums; }
+}
+
+@keyframes gradient-drift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

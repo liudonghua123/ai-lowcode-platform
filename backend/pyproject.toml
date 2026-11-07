@@ -1,0 +1,45 @@
+[project]
+name = "ai-lowcode-platform"
+version = "0.1.0"
+description = "AI-native low-code platform: visual workflow & form design, RBAC, SSO/MFA, MCP and AI agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Platform Team" }]
+dependencies = [
+    "fastapi>=0.128.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.8.0",
+    "httpx>=0.27.0",
+    "fastmcp>=4.0.0",
+    "agentscope>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+webauthn = ["webauthn>=1.11"]
+
+[tool.uv]
+package = false
+
+[tool.uv.pip]
+python-version = "3.11"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+# Focused rule set: correctness (E/F), import hygiene (I), common bugs (B),
+# modern Python (UP). Kept explicit so lint results are reproducible.
+select = ["E", "F", "I", "B", "UP"]
+ignore = [
+    "E501",  # long prompt / SQL / URL literals are kept on one line for readability
+    "B008",  # FastAPI's Depends(require(...)) declarative style is intentional
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI resolves dependencies at request time; calling Depends()/require()
+# in a signature default is the idiomatic declarative style, not a mutable default.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.params.Depends", "deps.require"]
