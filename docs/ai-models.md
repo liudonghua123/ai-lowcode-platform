@@ -39,7 +39,7 @@ The first release read LLM settings exclusively from `LLM_*` environment variabl
 
 ## 3. Data model
 
-`ai_providers` (one of the 21 tables): `id`, `code` (unique), `name`, `category`, `vendor`, `base_url`, `api_key`, `model`, `enabled`, `is_default`, `config` **JSON**, `description`, `created_at`, `updated_at`. `idx_ai_providers_category(category, is_default)` accelerates default lookups.
+`ai_providers` (one of the 26 tables): `id`, `code` (unique), `name`, `category`, `vendor`, `base_url`, `api_key`, `model`, `enabled`, `is_default`, `config` **JSON**, `description`, `created_at`, `updated_at`. `idx_ai_providers_category(category, is_default)` accelerates default lookups.
 
 | Field | Notes |
 | --- | --- |
@@ -119,7 +119,7 @@ Enabled flags are derived, not copied: a category with both URL and key becomes 
 
 ## 8. Validation and limitations
 
-`backend/tests/smoke.py` (116 assertions) covers category metadata, vendor presets, create/update/delete, invalid category rejection, exclusive default, masked keys, key retention on masked `PUT`, `effective_llm()` overriding environment values, static/live test endpoints, runtime metadata, the `/settings/ai` view with `.env` prefill, per-category save, unknown-category rejection, and the env-managed detach/restore cycle.
+`backend/tests/smoke.py` (157 assertions) covers category metadata, vendor presets, create/update/delete, invalid category rejection, exclusive default, masked keys, key retention on masked `PUT`, `effective_llm()` overriding environment values, static/live test endpoints, runtime metadata, the `/settings/ai` view with `.env` prefill, per-category save, unknown-category rejection, and the env-managed detach/restore cycle.
 
 **Current limitations (intentional):**
 

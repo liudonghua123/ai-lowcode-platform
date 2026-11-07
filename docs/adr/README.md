@@ -14,8 +14,9 @@ This directory records **significant, hard-to-reverse architectural decisions** 
 | [0006](0006-rbac-mfa-and-sso.md) | Declarative RBAC with policy-driven MFA and demo-capable SSO | Accepted | Security |
 | [0007](0007-mcp-skill-lifecycle-and-journal.md) | Skill lifecycle, editable skill files and MCP call journal | Accepted | MCP / observability |
 | [0008](0008-mcp-skills-split-model-providers-and-knowledge-upload.md) | Split MCP servers and Skills, AI model providers, knowledge upload and agent bindings | Accepted | MCP / AI platform |
+| [0009](0009-domestic-forms-and-approval-runtime.md) | Domestic form engine and long-running human approval runtime | Accepted | Forms / workflow |
 
-Referenced from [ARC-001 §11](../architecture.md) and [AI-001 §15](../ai-design.md).
+Referenced from [ARC-001 §11](../architecture.md), [AI-001 §15](../ai-design.md) and [FFC-001](../form-flow-domestic.md).
 
 ## When to write an ADR
 

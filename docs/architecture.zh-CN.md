@@ -8,11 +8,11 @@
 | 适用版本 | `ai-lowcode-platform` v0.1.0 |
 | 读者 | 架构师、前后端工程师、运维 |
 | English | [architecture.md](architecture.md) |
-| 关联文档 | [AI 系统设计](ai-design.zh-CN.md) · [安全架构](security.md) · [数据模型](data-model.md) · [接口与 MCP 规范](api-reference.md) · [ADR 索引](adr/README.md) |
+| 关联文档 | [AI 系统设计](ai-design.zh-CN.md) · [安全架构](security.md) · [数据模型](data-model.md) · [接口与 MCP 规范](api-reference.md) · [国内表单与审批规范](form-flow-domestic.md) · [ADR 索引](adr/README.md) |
 
 ## 1. 目的与范围
 
-本文档描述 AI 低代码平台的**已落地架构**：一套前后端分离的全栈系统，提供可视化表单设计、可视化 DAG 流程编排、版本化 REST API、**MCP 服务与技能两套独立注册表**、多类别 AI 模型配置、多格式知识库上传、带声明式资源绑定的基于知识库的 AI 查询/操作智能体、RBAC、五种 SSO 协议，以及可按角色/用户配置的多因子认证。
+本文档描述 AI 低代码平台的**已落地架构**：一套前后端分离的全栈系统，提供**面向国内场景的表单引擎**（44 种字段、法定校验、公式沙箱、明细表、条件规则）、可视化 DAG 流程编排与**长时人工审批运行时**（会签、并行/汇聚、委托、任务动作）、版本化 REST API、**MCP 服务与技能两套独立注册表**、多类别 AI 模型配置、多格式知识库上传、带声明式资源绑定的基于知识库的 AI 查询/操作智能体、RBAC、五种 SSO 协议，以及可按角色/用户配置的多因子认证。国内增强详见 [FFC-001](form-flow-domestic.md) 与 [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md)。
 
 **范围内**：系统上下文、容器视图、前后端组件、运行时流程、数据流、部署拓扑、横切关注点、质量属性与演进边界。
 
@@ -65,11 +65,11 @@ flowchart LR
     subgraph Process["uvicorn :8000（FastAPI）"]
         API["REST 层<br/>/api/v1 · 13 个 router"]
         MCPS["MCP 服务<br/>/mcp · fastmcp + 内置回退"]
-        SVC["服务层<br/>workflow_engine · rag · llm<br/>mcp_tools · mcp_servers<br/>model_providers · documents"]
+        SVC["服务层<br/>workflow_engine · flow_runtime · rag · llm<br/>form_catalog · form_rules · mcp_tools · mcp_servers<br/>model_providers · documents"]
         SEC["安全层<br/>JWT · PBKDF2 · TOTP<br/>WebAuthn · RBAC"]
         HOST["SPA 静态托管<br/>frontend/dist 回退"]
     end
-    DB[(SQLite<br/>WAL · 21 张表)]
+    DB[(SQLite<br/>WAL · 26 张表)]
     FS[("dist/ 静态资源")]
 
     SPA -->|JSON + Bearer| API
@@ -86,7 +86,7 @@ flowchart LR
 | 容器 | 职责 | 技术 |
 | --- | --- | --- |
 | SPA | 全部 UI、可视化设计器、i18n、主题 | Vite 6、React 18、TypeScript、Tailwind 3、shadcn/ui 风格组件、lucide-react |
-| REST 层 | 97 个 OpenAPI 路径、Pydantic 模型、错误语义 | FastAPI 0.128+、`APIRouter`、`Depends` |
+| REST 层 | 120 个 OpenAPI 路径、Pydantic 模型、错误语义 | FastAPI 0.128+、`APIRouter`、`Depends` |
 | MCP 服务 | `initialize` / `tools/list` / `tools/call` / resources / prompts | `fastmcp` 4.1.6 `http_app(path="/mcp")` + 内置 JSON-RPC 回退 |
 | 服务层 | 纯业务逻辑，不感知 HTTP | `app/services/` 下 Python 模块 |
 | 安全层 | 身份、令牌、密码/MFA、权限校验 | 标准库 `hashlib`/`hmac`、HS256 JWT、`contextvars` |
@@ -111,7 +111,10 @@ app/
     ├── mcp_servers.py      MCP 服务注册表、探测/同步、外部工具桥接
     ├── model_providers.py  6 类 AI 模型配置、密钥脱敏、effective_llm()
     ├── documents.py        纯标准库多格式解析（OOXML/PDF/OCR/文本）
-    ├── workflow_engine.py  DAG 校验（环检测）、条件路由、执行
+    ├── workflow_engine.py  DAG 校验（14 种节点）、条件组、同步 dry-run 执行
+    ├── flow_runtime.py     ★ 长时审批：审批人规则、会签模式、任务、超时
+    ├── form_catalog.py     ★ 5 组 44 种字段、校验器、运算符、函数
+    ├── form_rules.py       ★ 法定校验、AST 公式沙箱、显隐规则、字段权限
     ├── rag.py              中英混合分词、分块、BM25、上下文拼装
     ├── llm.py              3 个后端、ReAct 编排、有据回答
     └── sso.py              5 种 Provider 适配、demo 模式、身份自动建号
@@ -189,16 +192,22 @@ sequenceDiagram
     R-->>U: 带可见工具调用步骤的响应
 ```
 
-### 7.3 流程执行
+### 7.3 流程执行（同步 dry-run）
 
-`validate_graph()` 强制校验：唯一 `start`、至少一个 `end`、节点类型合法、边端点存在、无环（DFS 三状态）。`run()` 按 DAG 遍历，依据上下文求值 `condition` 节点（`gt/gte/lt/lte/eq/ne/contains`），分派 `form/approval/ai/knowledge/http/notification` 节点，返回 `{status, context, logs}` 并写入 `workflow_instances`。
+`validate_graph()` 强制校验：唯一 `start`、至少一个 `end`、节点类型合法、边端点存在、无环（DFS 三状态）。`run()` 按 DAG 遍历，依据上下文求值 `condition` 节点（`gt/gte/lt/lte/eq/ne/contains` 及条件组），分派 `form/approval/ai/knowledge/http/notification/cc/parallel/join/delay/subflow` 节点，返回 `{status, context, logs}` 并写入 `workflow_instances`。
+
+### 7.4 国内长时审批实例
+
+`POST /workflows/{id}/start` 创建实例时**固定 graph 快照**与 `workflow_version`，后续修改定义不会改变在途审批。`services/flow_runtime.py` 按 9 类规则解析审批人（`users`、`roles`、`departments`、`initiator`、`initiator_leader`、`leader_chain`、`form_field`、`previous`、`self_select`），应用生效的 `flow_delegations`，为「每人 × 每节点 × 每轮」生成一条 `flow_tasks`。`any` / `all` / `ratio` / `sequence` 四种会签方式决定节点完成条件，`parallel` + `join` 控制并发分支汇聚。每次 `act`（同意/驳回/退回/转交/加签）写入审计日志与时间线；`withdraw`、`urge`、`sweep_timeouts()` 覆盖撤回、催办与超时策略。`GET /workflows/instances/{id}/form-schema` 把绑定表单 schema 与当前节点 `field_permissions` 合并，`form_rules.validate_data()` 在服务端强制 `editable` / `readonly` / `hidden`。详见 [FFC-001](form-flow-domestic.md)。
 
 ## 8. 数据流
 
 | 流程 | 路径 | 存储 |
 | --- | --- | --- |
 | 表单定义 | 设计器 → `PUT /forms/{id}` → JSON `schema` 列 | `forms`, `form_submissions` |
+| 表单规则 / 版本 | `POST /forms/{id}/evaluate` → `form_rules` → 发布时快照 | `form_versions`, `form_submissions.computed` |
 | 流程画布 | 画布 → `PUT /workflows/{id}` → JSON `graph` 列 | `workflows`, `workflow_instances` |
+| 审批实例 | `POST /workflows/{id}/start` → `flow_runtime` → `/instances/.../act` | `workflow_versions`, `flow_tasks`, `flow_delegations`, `org_units` |
 | 知识库（文本） | 创建文档 → `rag.index_document()` → JSON `chunks` | `kb_collections`, `kb_documents` |
 | 知识库（上传） | Multipart → `documents.parse()` → `rag.index_document()` → 文件元数据 + 分块 | `kb_documents` |
 | 智能体会话 | 对话 → `run_agent()`（按绑定收窄工具域）→ 会话轮次 | `conversations`, `audit_logs` |
@@ -223,13 +232,13 @@ SPA catch-all 无条件注册，并在每次请求时解析 `dist/index.html`，
 
 | 关注点 | 实现 |
 | --- | --- |
-| i18n | 每种语言 651 个叶子键，默认 `en`，`localStorage` 持久化，同步 `<html lang>`，缺失回退英文 |
+| i18n | 每种语言 740 个叶子键，默认 `en`，`localStorage` 持久化，同步 `<html lang>`，缺失回退英文 |
 | 主题 | `system`（默认）/ `light` / `dark`，监听 `prefers-color-scheme`，HSL CSS 变量，`meta[theme-color]` |
 | 审计 | 所有写操作 → `audit_logs(actor, action, resource, detail, ip, level, created_at)` |
 | 配置 | `python-dotenv` → 冻结 `Settings`；`settings` 表支持运行时覆盖 |
 | 错误 | `HTTPException` 401 / 403 / 404 / 422；客户端 `ApiError`；401 触发全局登出 |
 | 可观测 | `/api/v1/meta/health`、`/meta/stats`、`/agents/meta/runtime`、`/agents/meta/bindings`、`/mcp/status`、`/mcp/calls/stats`、`/knowledge/stats` |
-| 测试 | `backend/tests/smoke.py` 116 项端到端断言；`pnpm typecheck`、`pnpm build`、`pnpm check:i18n`、`ruff check` |
+| 测试 | `backend/tests/smoke.py` 157 项端到端断言；`pnpm typecheck`、`pnpm build`、`pnpm check:i18n`、`ruff check` |
 
 ## 11. 技术决策摘要
 
@@ -243,6 +252,7 @@ SPA catch-all 无条件注册，并在每次请求时解析 `dist/index.html`，
 | RBAC + 策略化 MFA + demo SSO | 不依赖外部 IdP 也具备完整认证面 | [0006](adr/0006-rbac-mfa-and-sso.md) |
 | 技能生命周期、可编辑文件与调用日记 | 可审计的第三方能力管理 | [0007](adr/0007-mcp-skill-lifecycle-and-journal.md) |
 | MCP 服务/技能拆分、AI 模型服务、知识库上传、智能体绑定 | 独立注册表与可配置的模型/知识资源 | [0008](adr/0008-mcp-skills-split-model-providers-and-knowledge-upload.md) |
+| 国内表单引擎 + 长时人工审批运行时 | 不引入逐字段关系表即可覆盖国内企业/政务表单与审批场景 | [0009](adr/0009-domestic-forms-and-approval-runtime.md) |
 
 ## 12. 质量属性与取舍
 
@@ -252,7 +262,7 @@ SPA catch-all 无条件注册，并在每次请求时解析 `dist/index.html`，
 | 安全性 | HS256 JWT、PBKDF2、逐路由 RBAC、审计 | RS256 / 密钥轮换、限流、密钥管理 |
 | AI 准确性 | 确定性 mock + BM25 有据回答 | 真实 LLM、向量库、重排序 |
 | 可扩展性 | 进程内索引、同步执行 | 流程任务队列、外部向量库 |
-| 可测试性 | 116 项冒烟断言，无需网络 | 契约测试、压力测试、MCP 一致性套件 |
+| 可测试性 | 157 项冒烟断言，无需网络 | 契约测试、压力测试、MCP 一致性套件 |
 | 可运维性 | health / stats / runtime 端点 | 结构化日志、指标、链路追踪 |
 
 ## 13. 已知限制
@@ -261,15 +271,17 @@ SPA catch-all 无条件注册，并在每次请求时解析 `dist/index.html`，
 - `mock` LLM 使用正则意图识别，是确定性逻辑而非生成式模型。
 - WebAuthn 采用 challenge / credential 绑定，未做完整 attestation 校验；`PASSKEY_ORIGIN` 必须与部署一致（HTTPS 或 localhost）。
 - SSO demo 模式不经过真实 IdP 校验即自动建号；生产需配置真实凭据与 TLS。
-- 流程引擎在请求内同步执行；长流程应迁移到任务队列。
+- **同步** `/run` dry-run 仍在请求内执行；真实人工审批使用持久化的长时实例，但 `subflow`、`delay`、`signature`/`attachment` 文件存储与 GB/T 2260 省市区样例仍为模拟或简化实现（见 [FFC-001 §7](form-flow-domestic.md)）。超长流程的生产路径仍是任务队列。
 
 ## 14. 需求可追溯性
 
 | 需求 | 设计要素 | 代码 |
 | --- | --- | --- |
 | 可视化表单设计 | 元数据驱动设计器 | `routers/forms.py`, `pages/Forms.tsx` |
+| 国内表单增强（FFC-001） | 44 字段目录、法定校验、AST 公式、版本、打印/CSV | `services/form_catalog.py`, `services/form_rules.py`, `routers/forms.py`, `pages/Forms.tsx` |
 | 可视化流程编排 | DAG 校验器 + 执行引擎 | `services/workflow_engine.py`, `pages/Workflows.tsx` |
-| REST API | 版本化路由 | `routers/*.py`（133 个路由装饰器 → 97 个 OpenAPI 路径） |
+| 人工审批运行时（ADR-0009） | 长时实例、会签、并行/汇聚、任务动作、委托 | `services/flow_runtime.py`, `routers/workflows.py`, `pages/Workflows.tsx` |
+| REST API | 版本化路由 | `routers/*.py`（157 个路由装饰器 → 120 个 OpenAPI 路径） |
 | MCP 传输 + 工具注册表 | 双传输 MCP + 单一注册表 | `mcp_server.py`, `routers/mcp.py`, `services/mcp_tools.py` |
 | MCP 服务（独立） | CRUD、探测/同步、声明工具、远程调用 | `routers/mcp_servers.py`, `services/mcp_servers.py`, `mcp_servers` |
 | 技能（独立） | 生命周期、目录、可编辑文件、`server_id` 关联 | `routers/skills.py`, `services/skill_*.py`, `mcp_skills` |

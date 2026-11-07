@@ -13,19 +13,66 @@ export interface User {
   otp_enabled?: boolean; passkey_enabled?: boolean; passkey_count?: number
   provider?: string; last_login_at?: string; created_at?: string
 }
+export interface FormCondition { field: string; operator: string; value: unknown }
+export interface FormRule { logic: 'and' | 'or'; conditions: FormCondition[] }
+export interface FormDetailColumn {
+  key: string; label: string; type: string; formula?: string; options?: string[]
+}
+export interface FormDetailSummary { key: string; label: string; column: string; op: string }
 export interface FormField {
   id: string; key: string; type: string; label: string; required?: boolean
   placeholder?: string; options?: string[]; width?: number; defaultValue?: unknown
   validation?: Record<string, unknown>; description?: string
+  formula?: string; visible_when?: FormRule; required_when?: FormRule
+  permission?: 'editable' | 'readonly' | 'hidden'
+  columns?: FormDetailColumn[]; summary?: FormDetailSummary[]
+  serial?: { prefix?: string; date?: boolean; digits?: number }
+  show_upper?: boolean; region_level?: number; mobile_hidden?: boolean
+  permission_node?: string; group?: string; caps?: string[]
+}
+export interface FormFieldItem {
+  type: string; group: string; label: string; width: number; caps: string[]
+}
+export interface FormFieldGroup { code: string; label: string; fields: string[] }
+export interface FormCatalog {
+  groups: FormFieldGroup[]; fields: FormFieldItem[]; field_types: string[]
+  validators: { code: string; label: string }[]
+  operators: { code: string; label: string }[]
+  functions: { code: string; args: string; label: string }[]
+  permission_modes: { code: string; label: string }[]
+  layout_types: string[]; computed_types: string[]
+  field_count: number; region_levels: number
 }
 export interface FormDef {
   id: number; code: string; name: string; description?: string; status: string
   schema: FormField[]; layout: Record<string, unknown>; version: number
+  print_template?: Record<string, unknown>; settings?: Record<string, unknown>
+  field_count?: number
   created_by?: string; created_at?: string; updated_at?: string
 }
 export interface FormSubmission {
   id: number; form_id: number; data: Record<string, unknown>
   status: string; submitted_by?: string; created_at?: string
+  form_version?: number; serial_no?: string | null; flow_instance_id?: number | null
+  computed?: Record<string, unknown>; updated_at?: string
+}
+export interface FormVersion {
+  id: number; form_id: number; version: number; schema: FormField[]
+  layout: Record<string, unknown>; print_template?: Record<string, unknown>
+  settings?: Record<string, unknown>; note?: string
+  created_by?: string; created_at?: string
+}
+export interface FormEvalResult {
+  ok: boolean; data: Record<string, unknown>; computed: Record<string, unknown>
+  summaries: Record<string, number>; visible: string[]; hidden: string[]
+  permissions: Record<string, string>
+  errors: { key: string; rule: string; message: string }[]
+}
+export interface PrintView {
+  form: { code: string; name: string; version: number }
+  serial_no?: string; submitted_by?: string; created_at?: string
+  fields: { key: string; label: string; value: unknown; type: string; upper?: string; info?: unknown }[]
+  summaries: Record<string, number>; computed: Record<string, unknown>
 }
 export interface WfNode {
   id: string; type: string; name: string; x: number; y: number
@@ -37,12 +84,42 @@ export interface WfEdge {
 export interface WfGraph { nodes: WfNode[]; edges: WfEdge[] }
 export interface WorkflowDef {
   id: number; code: string; name: string; description?: string; status: string
-  graph: WfGraph; version: number; created_by?: string; created_at?: string; updated_at?: string
+  graph: WfGraph; version: number; form_code?: string | null
+  node_count?: number; edge_count?: number
+  created_by?: string; created_at?: string; updated_at?: string
+}
+export interface FlowTask {
+  id: number; instance_id: number; node_id: string; node_name?: string
+  node_type?: string; assignee: string; seq: number; status: string
+  decision?: string | null; comment?: string | null; signature?: string | null
+  due_at?: string | null; acted_at?: string | null; created_at?: string
+  delegated_from?: string | null; round: number
+  instance_status?: string; form_code?: string | null; initiator?: string
 }
 export interface WorkflowInstance {
   id: number; workflow_id: number; status: string
   context: Record<string, unknown>; logs: Record<string, unknown>[]
   started_by?: string; started_at?: string; finished_at?: string
+  form_code?: string | null; form_data?: Record<string, unknown>
+  variables?: Record<string, unknown>; current_nodes?: string[]
+  workflow_version?: number; tasks?: FlowTask[]; pending?: FlowTask[]
+  task_count?: number; submission_id?: number
+}
+export interface FlowMeta {
+  approver_rules: { code: string; label: string }[]
+  sign_modes: { code: string; label: string }[]
+  empty_policies: { code: string; label: string }[]
+  timeout_actions: { code: string; label: string }[]
+  actions: string[]; node_config: Record<string, string[]>
+  operators: string[]
+}
+export interface FlowDelegation {
+  id: number; principal: string; agent: string; scope?: string
+  starts_at?: string; ends_at?: string; enabled: number; created_by?: string
+}
+export interface WorkflowVersion {
+  id: number; workflow_id: number; version: number
+  graph: WfGraph; form_code?: string; note?: string; created_by?: string; created_at?: string
 }
 export interface KbCollection {
   id: number; code: string; name: string; description?: string
@@ -204,10 +281,15 @@ export interface Bootstrap {
   app: { name: string; version: string; api_prefix: string; license: string }
   i18n: { locales: string[]; default: string }
   themes: string[]; defaults: { locale: string; theme: string }
-  form: { field_types: string[]; statuses: string[] }
+  form: {
+    field_types: string[]; statuses: string[]
+    field_groups?: { code: string; label: string }[]
+    validators?: string[]; functions?: string[]; permission_modes?: string[]
+  }
   workflow: {
     node_types: { type: string; name: string; category: string; color: string; config: string[] }[]
     operators: string[]; statuses: string[]
+    approver_rules?: string[]; sign_modes?: string[]; actions?: string[]
   }
   rbac: { permissions: Permission[]; roles: Pick<Role, 'id' | 'code' | 'name'>[] }
   auth: { provider_meta: Record<string, unknown>; providers: AuthProvider[]; mfa_methods: string[]; mfa_policy: MfaPolicy }

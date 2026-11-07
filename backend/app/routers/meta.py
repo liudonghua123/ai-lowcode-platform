@@ -7,7 +7,16 @@ from pydantic import BaseModel, Field
 from .. import __version__, db, deps, security
 from ..config import settings
 from ..routers import forms, workflows
-from ..services import llm, mcp_servers, mcp_tools, model_providers, skill_catalog, sso
+from ..services import (
+    flow_runtime,
+    form_catalog,
+    llm,
+    mcp_servers,
+    mcp_tools,
+    model_providers,
+    skill_catalog,
+    sso,
+)
 
 router = APIRouter(prefix="/meta", tags=["Metadata"])
 settings_router = APIRouter(prefix="/settings", tags=["Settings"])
@@ -26,6 +35,11 @@ def health(request: Request):
         "registries": {"mcp_servers": mcp_servers.stats()["total"],
                        "skills": int(db.scalar("SELECT COUNT(*) FROM mcp_skills") or 0),
                        "model_providers": model_providers.meta()["total"]},
+        "form_flow": {"form_field_types": len(forms.FIELD_TYPES),
+                      "workflow_node_types": len(workflows.NODE_TYPES),
+                      "pending_tasks": int(db.scalar(
+                          "SELECT COUNT(*) FROM flow_tasks WHERE status='pending'") or 0),
+                      "org_units": int(db.scalar("SELECT COUNT(*) FROM org_units") or 0)},
         "database": "sqlite",
     }
 
@@ -60,8 +74,15 @@ def bootstrap(user: dict = Depends(deps.get_current_user), request: Request = No
         "themes": ["system", "light", "dark"],
         "defaults": {"locale": "en", "theme": "system"},
         "form": {"field_types": forms.FIELD_TYPES,
+                 "field_groups": form_catalog.catalog()["groups"],
+                 "validators": [v["code"] for v in form_catalog.VALIDATORS],
+                 "functions": [f["code"] for f in form_catalog.FUNCTIONS],
+                 "permission_modes": [m["code"] for m in form_catalog.PERMISSION_MODES],
                  "statuses": ["draft", "published", "archived"]},
         "workflow": {"node_types": workflows.NODE_TYPES, "operators": workflows.OPERATORS,
+                     "approver_rules": [r["code"] for r in flow_runtime.APPROVER_RULES],
+                     "sign_modes": [m["code"] for m in flow_runtime.SIGN_MODES],
+                     "actions": flow_runtime.ACTIONS,
                      "statuses": ["draft", "published", "archived"]},
         "rbac": {"permissions": perms,
                  "roles": [dict(r, builtin=bool(r["builtin"]),

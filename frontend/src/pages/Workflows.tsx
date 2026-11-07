@@ -1,25 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  Bell, BookOpen, Bot, CheckCircle2, CircleDot, FileText, GitBranch, Globe2,
-  LayoutGrid, Link2, Minus, Play, Plus, RefreshCw, Save, Settings2, ShieldCheck,
-  Sparkles, Square, Trash2, X, ZoomIn, ZoomOut,
+  ArrowRightLeft, Bell, BookOpen, Bot, CheckCircle2, CircleDot, Clock, FileText,
+  GitBranch, Globe2, History, LayoutGrid, Layers, Link2, ListTodo, Minus, Network,
+  Play, Plus, RefreshCw, Save, Settings2, ShieldCheck, Sparkles, Square, Timer,
+  Trash2, Undo2, UserCheck, UserPlus, UsersRound, X, ZoomIn, ZoomOut, Send,
 } from 'lucide-react'
 import { PageHeader, SectionTitle } from '@/components/PageHeader'
 import {
   Badge, Button, Card, CardContent, EmptyState, Field, Input, Label, Segmented,
-  Select, Textarea,
+  Select, Switch, Textarea,
 } from '@/components/ui/basic'
 import { ConfirmDialog, Dialog, Tabs, useToast } from '@/components/ui/overlay'
 import { useI18n } from '@/i18n'
 import { useApp } from '@/store/AppContext'
 import { del, get, post, put } from '@/lib/api'
 import { cn, formatDate, safeParse, uid } from '@/lib/utils'
-import type { WfEdge, WfGraph, WfNode, WorkflowDef, WorkflowInstance } from '@/types'
+import type {
+  FlowMeta, FlowTask, WfEdge, WfGraph, WfNode, WorkflowDef, WorkflowInstance,
+  WorkflowVersion,
+} from '@/types'
 
 const NODE_ICONS: Record<string, typeof Play> = {
   start: Play, end: Square, form: FileText, condition: GitBranch, approval: ShieldCheck,
   ai: Sparkles, knowledge: BookOpen, http: Globe2, notification: Bell,
+  cc: UsersRound, parallel: Network, join: Layers, delay: Clock, subflow: GitBranch,
 }
 const FALLBACK_TYPES = [
   { type: 'start', name: 'Start', color: '#6366f1', category: 'control', config: [] },
@@ -31,6 +36,11 @@ const FALLBACK_TYPES = [
   { type: 'knowledge', name: 'Knowledge', color: '#14b8a6', category: 'ai', config: ['query'] },
   { type: 'http', name: 'HTTP', color: '#22c55e', category: 'integration', config: ['method', 'url'] },
   { type: 'notification', name: 'Notification', color: '#f97316', category: 'integration', config: ['channel', 'template'] },
+  { type: 'cc', name: 'CC', color: '#38bdf8', category: 'task', config: ['assignees'] },
+  { type: 'parallel', name: 'Parallel', color: '#a855f7', category: 'logic', config: [] },
+  { type: 'join', name: 'Join', color: '#7c3aed', category: 'logic', config: ['join_mode'] },
+  { type: 'delay', name: 'Delay', color: '#f97316', category: 'logic', config: ['delay_hours'] },
+  { type: 'subflow', name: 'Subflow', color: '#0d9488', category: 'logic', config: ['workflow_code'] },
 ]
 const NODE_W = 176, NODE_H = 64
 
@@ -62,6 +72,17 @@ export default function Workflows() {
   const [runResult, setRunResult] = useState<any>(null)
   const [instances, setInstances] = useState<WorkflowInstance[]>([])
   const [newWf, setNewWf] = useState({ code: '', name: '', description: '' })
+  const [flowMeta, setFlowMeta] = useState<FlowMeta | null>(null)
+  const [tasks, setTasks] = useState<FlowTask[]>([])
+  const [taskStatus, setTaskStatus] = useState('pending')
+  const [instanceDetail, setInstanceDetail] = useState<WorkflowInstance | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [startOpen, setStartOpen] = useState(false)
+  const [startFormText, setStartFormText] = useState('{\n  "applicant": "admin",\n  "department": "IT",\n  "mobile": "13800138000",\n  "claim_type": "差旅",\n  "items": [{ "qty": 2, "price": 3000 }],\n  "remark": "客户拜访"\n}')
+  const [versionsOpen, setVersionsOpen] = useState(false)
+  const [wfVersions, setWfVersions] = useState<WorkflowVersion[]>([])
+  const [actDialog, setActDialog] = useState<{ task: FlowTask; action: string } | null>(null)
+  const [actForm, setActForm] = useState({ comment: '', assignee: '', return_to: 'initiator' })
 
   const nodeTypes = bootstrap?.workflow.node_types || FALLBACK_TYPES
   const operators = bootstrap?.workflow.operators || ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains', 'in']
@@ -76,7 +97,71 @@ export default function Workflows() {
   const loadInstances = async (id: number) => {
     try { const r = await get<{ instances: WorkflowInstance[] }>(`/workflows/${id}/instances`); setInstances(r.instances || []) } catch { setInstances([]) }
   }
-  useEffect(() => { void load() }, [])
+  const loadMeta = async () => {
+    try { setFlowMeta(await get<FlowMeta>(`/workflows/meta?lang=${locale}`)) } catch { /* optional */ }
+  }
+  const loadTasks = async (status = taskStatus) => {
+    try {
+      const r = await get<{ tasks: FlowTask[] }>(`/workflows/tasks?status=${status}`)
+      setTasks(r.tasks || [])
+    } catch { setTasks([]) }
+  }
+  useEffect(() => { void load(); void loadMeta(); void loadTasks() }, [])
+  useEffect(() => { void loadMeta() }, [locale])
+
+  const startInstance = async () => {
+    if (!selected) return
+    try {
+      await post<WorkflowInstance>(`/workflows/${selected.id}/start`,
+        { form_data: safeParse(startFormText, {}), create_submission: true })
+      setStartOpen(false); await loadInstances(selected.id); await loadTasks()
+      setRightTab('tasks'); toast(t('workflows.startSuccess'), 'success')
+    } catch (e: any) { toast(e.message, 'error') }
+  }
+  const openInstance = async (id: number) => {
+    try {
+      const r = await get<WorkflowInstance>(`/workflows/instances/${id}`)
+      setInstanceDetail(r); setDetailOpen(true); await loadTasks()
+    } catch (e: any) { toast(e.message, 'error') }
+  }
+  const doAct = async () => {
+    if (!actDialog) return
+    try {
+      await post(`/workflows/instances/${actDialog.task.instance_id}/tasks/${actDialog.task.id}/act`, {
+        action: actDialog.action, comment: actForm.comment || undefined,
+        assignee: actForm.assignee || undefined, return_to: actForm.return_to || undefined,
+      })
+      const iid = actDialog.task.instance_id
+      setActDialog(null); setActForm({ comment: '', assignee: '', return_to: 'initiator' })
+      await loadTasks()
+      if (instanceDetail?.id === iid) await openInstance(iid)
+      if (selected) await loadInstances(selected.id)
+      toast(t('common.saved'), 'success')
+    } catch (e: any) { toast(e.message, 'error') }
+  }
+  const withdrawInstance = async () => {
+    if (!instanceDetail) return
+    try {
+      await post(`/workflows/instances/${instanceDetail.id}/withdraw`, {})
+      await openInstance(instanceDetail.id); await loadTasks()
+      toast(t('common.saved'), 'success')
+    } catch (e: any) { toast(e.message, 'error') }
+  }
+  const openVersions = async () => {
+    if (!selected) return
+    try {
+      const r = await get<{ versions: WorkflowVersion[] }>(`/workflows/${selected.id}/versions`)
+      setWfVersions(r.versions || []); setVersionsOpen(true)
+    } catch (e: any) { toast(e.message, 'error') }
+  }
+  const restoreVersion = async (v: number) => {
+    if (!selected) return
+    try {
+      const r = await post<WorkflowDef>(`/workflows/${selected.id}/versions`, { version: v })
+      setSelected(r); setNodes(r.graph?.nodes || []); setEdges(r.graph?.edges || [])
+      await load(); await openVersions(); toast(t('common.saved'), 'success')
+    } catch (e: any) { toast(e.message, 'error') }
+  }
 
   const select = (wf: WorkflowDef) => {
     setSelected(wf); setNodes(wf.graph?.nodes || []); setEdges(wf.graph?.edges || [])
@@ -266,6 +351,9 @@ export default function Workflows() {
                   <Button variant="outline" size="sm" onClick={() => setMetaOpen(true)}><Settings2 className="h-3.5 w-3.5" /></Button>
                   <Button variant="outline" size="sm" onClick={validate}>{t('common.validate')}</Button>
                   <Button variant="outline" size="sm" loading={saving} onClick={() => save(false)} disabled={!can('workflow:write')}><Save className="h-3.5 w-3.5" />{t('common.save')}</Button>
+                  <Button variant="outline" size="sm" onClick={() => void openVersions()}><History className="h-3.5 w-3.5" />{t('workflows.versions')}</Button>
+                  <Button variant="outline" size="sm" onClick={() => setRightTab('tasks')}><ListTodo className="h-3.5 w-3.5" />{t('workflows.tasks')}</Button>
+                  <Button variant="outline" size="sm" onClick={() => setStartOpen(true)} disabled={!can('workflow:run')}><Send className="h-3.5 w-3.5" />{t('workflows.start')}</Button>
                   <Button size="sm" onClick={() => { setRunResult(null); setRunOpen(true) }} disabled={!can('workflow:run')}><Play className="h-3.5 w-3.5" />{t('common.run')}</Button>
                 </div>
               </div>
@@ -332,33 +420,79 @@ export default function Workflows() {
           <CardContent className="p-3">
             <Tabs value={rightTab} onValueChange={setRightTab} className="mb-3 w-full" items={[
               { value: 'properties', label: t('workflows.properties') },
+              { value: 'tasks', label: t('workflows.tasks'), count: tasks.filter((x) => x.status === 'pending').length },
               { value: 'runs', label: t('workflows.instances'), count: instances.length },
             ]} />
             {rightTab === 'properties' && (
-              active ? <NodeProperties node={active} operators={operators} patch={patchNode} patchConfig={patchConfig} remove={removeNode} /> :
+              active ? <NodeProperties node={active} operators={operators} meta={flowMeta}
+                  patch={patchNode} patchConfig={patchConfig} remove={removeNode} /> :
               activeE ? <EdgeProperties edge={activeE} onChange={(p) => setEdges((prev) => prev.map((e) => e.id === activeE.id ? { ...e, ...p } : e))}
                 onDelete={() => { setEdges((p) => p.filter((e) => e.id !== activeE.id)); setActiveEdge(null) }} /> :
               <p className="py-8 text-center text-xs text-muted-foreground">{t('workflows.properties')}</p>
             )}
+            {rightTab === 'tasks' && (
+              <div className="space-y-2">
+                <Select className="h-8 text-xs" value={taskStatus}
+                  onValueChange={(v) => { setTaskStatus(v); void loadTasks(v) }}
+                  options={[
+                    { value: 'pending', label: t('workflows.pendingTasks') },
+                    { value: 'approved', label: t('workflows.approvedTasks') },
+                    { value: 'all', label: t('workflows.allTasks') },
+                  ]} />
+                <div className="scroll-thin max-h-[30rem] space-y-2 overflow-y-auto">
+                  {tasks.map((task) => (
+                    <div key={task.id} className="rounded-lg border p-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs">#{task.id}</span>
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium">{task.node_name}</span>
+                        <Badge variant={task.status === 'pending' ? 'warning' : task.status === 'approved' ? 'success' : 'muted'}
+                          className="text-[9px]">{task.status}</Badge>
+                      </div>
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        {t('workflows.instance')} #{task.instance_id} · {task.assignee}
+                        {task.due_at ? ` · ${t('workflows.dueAt')} ${formatDate(task.due_at, locale)}` : ''}
+                        {task.round > 1 ? ` · R${task.round}` : ''}
+                      </p>
+                      {task.status === 'pending' && <div className="mt-2 flex flex-wrap gap-1">
+                        {[
+                          { a: 'approve', label: t('workflows.approve'), icon: <UserCheck className="h-3 w-3" /> },
+                          { a: 'reject', label: t('workflows.reject'), icon: <X className="h-3 w-3" /> },
+                          { a: 'return', label: t('workflows.returnTask'), icon: <Undo2 className="h-3 w-3" /> },
+                          { a: 'transfer', label: t('workflows.transfer'), icon: <ArrowRightLeft className="h-3 w-3" /> },
+                          { a: 'addsign_after', label: t('workflows.addsign'), icon: <UserPlus className="h-3 w-3" /> },
+                        ].map((x) => <Button key={x.a} variant="outline" size="sm"
+                          onClick={() => { setActDialog({ task, action: x.a }); setActForm({
+                            comment: '', assignee: '', return_to: 'initiator' }) }}>
+                          {x.icon}{x.label}</Button>)}
+                      </div>}
+                    </div>
+                  ))}
+                  {!tasks.length && <p className="py-8 text-center text-xs text-muted-foreground">{t('workflows.noTasks')}</p>}
+                </div>
+              </div>
+            )}
             {rightTab === 'runs' && (
               <div className="scroll-thin max-h-[30rem] space-y-2 overflow-y-auto">
                 {instances.map((ins) => (
-                  <div key={ins.id} className="rounded-lg border p-2.5">
+                  <button key={ins.id} onClick={() => void openInstance(ins.id)}
+                    className="w-full rounded-lg border p-2.5 text-left transition-all hover:border-primary/40 hover:bg-primary/5">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs">#{ins.id}</span>
-                      <Badge variant={ins.status === 'completed' ? 'success' : ins.status === 'failed' ? 'destructive' : 'warning'}>{ins.status}</Badge>
+                      <Badge variant={ins.status === 'approved' || ins.status === 'completed' ? 'success'
+                        : ins.status === 'rejected' || ins.status === 'failed' ? 'destructive' : 'warning'}>{ins.status}</Badge>
+                      {!!ins.task_count && <Badge variant="muted" className="text-[9px]">{ins.task_count} tasks</Badge>}
                       <span className="ml-auto text-[10px] text-muted-foreground">{formatDate(ins.started_at, locale)}</span>
                     </div>
                     <div className="mt-2 space-y-1">
-                      {(ins.logs || []).map((log: any, i: number) => (
+                      {(ins.logs || []).slice(-4).map((log: any, i: number) => (
                         <div key={i} className="flex items-center gap-1.5 text-[10px]">
-                          <span className={cn('h-1.5 w-1.5 rounded-full', log.status === 'failed' ? 'bg-destructive' : 'bg-success')} />
-                          <span className="truncate">{String(log.name || log.type || log.node)}</span>
+                          <span className={cn('h-1.5 w-1.5 rounded-full', log.event === 'node_failed' ? 'bg-destructive' : 'bg-success')} />
+                          <span className="truncate">{String(log.event || log.name || log.type || log.node)}</span>
                           {log.branch && <Badge variant="outline" className="text-[9px]">{log.branch}</Badge>}
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </button>
                 ))}
                 {!instances.length && <p className="py-8 text-center text-xs text-muted-foreground">{t('workflows.noInstances')}</p>}
               </div>
@@ -411,6 +545,103 @@ export default function Workflows() {
         </div>
       </Dialog>
 
+      <Dialog open={startOpen} onOpenChange={setStartOpen} title={t('workflows.startTitle', { name: selected?.name || '' })} size="md"
+        footer={<><Button variant="outline" onClick={() => setStartOpen(false)}>{t('common.cancel')}</Button>
+          <Button onClick={startInstance}><Send className="h-3.5 w-3.5" />{t('workflows.start')}</Button></>}>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">{t('workflows.startHint')}</p>
+          <Field label={t('workflows.formData')}>
+            <Textarea className="font-mono text-xs" rows={9} value={startFormText}
+              onChange={(e) => setStartFormText(e.target.value)} /></Field>
+          {selected?.form_code && <Badge variant="muted">{selected.form_code}</Badge>}
+        </div>
+      </Dialog>
+
+      <Dialog open={!!actDialog} onOpenChange={() => setActDialog(null)}
+        title={actDialog ? t('workflows.taskAction', { action: actDialog.action }) : ''} size="sm"
+        footer={<><Button variant="outline" onClick={() => setActDialog(null)}>{t('common.cancel')}</Button>
+          <Button onClick={doAct}><CheckCircle2 className="h-3.5 w-3.5" />{t('common.confirm')}</Button></>}>
+        {actDialog && <div className="space-y-3">
+          <div className="rounded-lg border bg-muted/30 p-2 text-xs">
+            <p className="font-medium">{actDialog.task.node_name}</p>
+            <p className="text-[10px] text-muted-foreground">
+              #{actDialog.task.id} · {actDialog.task.assignee} · {t('workflows.instance')} #{actDialog.task.instance_id}</p>
+          </div>
+          {['approve', 'reject', 'return'].includes(actDialog.action) && <Field label={t('workflows.comment')}>
+            <Textarea rows={3} value={actForm.comment}
+              onChange={(e) => setActForm({ ...actForm, comment: e.target.value })} /></Field>}
+          {['transfer', 'addsign_before', 'addsign_after'].includes(actDialog.action) &&
+            <Field label={t('workflows.assignee')}><Input value={actForm.assignee}
+              placeholder="username" onChange={(e) => setActForm({ ...actForm, assignee: e.target.value })} /></Field>}
+          {actDialog.action === 'return' && <Field label={t('workflows.returnTo')}>
+            <Select value={actForm.return_to} onValueChange={(v) => setActForm({ ...actForm, return_to: v })}
+              options={[{ value: 'initiator', label: t('workflows.initiator') },
+                { value: 'previous', label: t('workflows.previous') }]} /></Field>}
+        </div>}
+      </Dialog>
+
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen} title={t('workflows.instanceDetail', { id: instanceDetail?.id || 0 })} size="lg"
+        footer={<><Button variant="outline" size="sm" onClick={withdrawInstance}
+          disabled={instanceDetail?.status !== 'running'}><Undo2 className="h-3.5 w-3.5" />{t('workflows.withdraw')}</Button>
+          <Button size="sm" onClick={() => setDetailOpen(false)}>{t('common.close')}</Button></>}>
+        {instanceDetail && <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-2.5">
+            <Badge variant={instanceDetail.status === 'approved' ? 'success'
+              : instanceDetail.status === 'rejected' || instanceDetail.status === 'canceled' ? 'destructive' : 'warning'}>
+              {instanceDetail.status}</Badge>
+            <span className="text-xs">{instanceDetail.form_code || '-'}</span>
+            <span className="ml-auto text-[10px] text-muted-foreground">
+              v{instanceDetail.workflow_version} · {instanceDetail.started_by} · {formatDate(instanceDetail.started_at, locale)}</span>
+          </div>
+          {!!instanceDetail.current_nodes?.length && <p className="text-[11px]">
+            {t('workflows.currentNodes')}: <span className="font-mono">{instanceDetail.current_nodes.join(', ')}</span></p>}
+          <div className="grid gap-3 md:grid-cols-2">
+            <div><p className="mb-1.5 text-xs font-semibold">{t('workflows.tasks')} ({instanceDetail.tasks?.length || 0})</p>
+              <div className="scroll-thin max-h-52 space-y-1 overflow-y-auto">
+                {(instanceDetail.tasks || []).map((task) => <div key={task.id}
+                  className="flex items-center gap-2 rounded border px-2 py-1.5 text-[10px]">
+                  <span className={cn('h-1.5 w-1.5 rounded-full', task.status === 'pending' ? 'bg-amber-500'
+                    : task.status === 'approved' ? 'bg-emerald-500' : 'bg-muted-foreground')} />
+                  <span className="min-w-0 flex-1 truncate">{task.node_name}</span>
+                  <span className="font-mono">{task.assignee}</span>
+                  <Badge variant="muted" className="text-[9px]">{task.status}</Badge>
+                </div>)}
+                {!instanceDetail.tasks?.length && <p className="text-[10px] text-muted-foreground">{t('common.noData')}</p>}
+              </div>
+            </div>
+            <div><p className="mb-1.5 text-xs font-semibold">{t('workflows.timeline')}</p>
+              <div className="scroll-thin max-h-52 space-y-1 overflow-y-auto">
+                {(instanceDetail.logs || []).slice().reverse().map((log: any, i: number) =>
+                  <div key={i} className="rounded border px-2 py-1.5 text-[10px]">
+                    <span className="font-mono text-primary">{log.event || log.node}</span>
+                    {log.actor && <span className="ml-1 text-muted-foreground">· {log.actor}</span>}
+                    {log.comment && <span className="ml-1 text-muted-foreground">· {log.comment}</span>}
+                  </div>)}
+              </div>
+            </div>
+          </div>
+          <details className="rounded-lg border p-2">
+            <summary className="cursor-pointer text-xs font-medium">{t('workflows.formData')}</summary>
+            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[10px] text-muted-foreground">
+              {JSON.stringify(instanceDetail.form_data || {}, null, 2)}</pre>
+          </details>
+        </div>}
+      </Dialog>
+
+      <Dialog open={versionsOpen} onOpenChange={setVersionsOpen} title={t('workflows.versions')} size="md"
+        footer={<Button variant="outline" onClick={() => setVersionsOpen(false)}>{t('common.close')}</Button>}>
+        <div className="space-y-2">
+          {wfVersions.map((v) => <div key={v.id} className="flex items-center gap-2 rounded-lg border px-3 py-2">
+            <Badge variant="muted">v{v.version}</Badge>
+            <span className="min-w-0 flex-1 truncate text-xs">{v.note || '-'}</span>
+            <span className="text-[10px] text-muted-foreground">{formatDate(v.created_at, locale)}</span>
+            {can('workflow:write') && <Button variant="outline" size="sm"
+              onClick={() => void restoreVersion(v.version)}>{t('workflows.restore')}</Button>}
+          </div>)}
+          {!wfVersions.length && <p className="py-6 text-center text-xs text-muted-foreground">{t('common.noData')}</p>}
+        </div>
+      </Dialog>
+
       <ConfirmDialog open={confirmDelete} onOpenChange={setConfirmDelete} title={t('common.confirmDelete')}
         description={selected?.name} onConfirm={remove} />
     </div>
@@ -419,9 +650,17 @@ export default function Workflows() {
 
 function defaultConfig(type: string): Record<string, unknown> {
   return ({
+    start: { form_code: '' },
     form: { form_code: 'leave_request', assignee: '${initiator}' },
-    condition: { field: 'days', operator: 'gt', value: 3 },
-    approval: { approver_role: 'admin', mode: 'any' },
+    condition: { field: 'days', operator: 'gt', value: 3, logic: 'and', conditions: [] },
+    approval: { approver_rule: 'roles', roles: ['admin'], sign_mode: 'any',
+      empty_policy: 'admin', timeout_hours: 24, timeout_action: 'remind',
+      comment_required: false, signature_required: false, field_permissions: {},
+      reject_policy: 'terminate', allow_return: true, allow_transfer: true, allow_addsign: true },
+    cc: { approver_rule: 'users', assignees: [] },
+    join: { join_mode: 'all' },
+    delay: { delay_hours: 1 },
+    subflow: { workflow_code: '' },
     ai: { prompt: 'Summarize this workflow context.' },
     knowledge: { query: 'policy', top_k: 3 },
     http: { method: 'POST', url: 'https://api.example.com/hook' },
@@ -429,41 +668,158 @@ function defaultConfig(type: string): Record<string, unknown> {
   } as Record<string, Record<string, unknown>>)[type] || {}
 }
 
-function NodeProperties({ node, operators, patch, patchConfig, remove }: {
-  node: WfNode; operators: string[]
+function NodeProperties({ node, operators, patch, patchConfig, remove, meta }: {
+  node: WfNode; operators: string[]; meta: FlowMeta | null
   patch: (id: string, p: Partial<WfNode>) => void
   patchConfig: (k: string, v: any) => void; remove: (id: string) => void
 }) {
   const { t } = useI18n()
   const Icon = NODE_ICONS[node.type] || CircleDot
   const cfg: any = node.config || {}
+  const rules = meta?.approver_rules || [
+    { code: 'users', label: 'Designated members' }, { code: 'roles', label: 'Role members' },
+    { code: 'departments', label: 'Department members' }, { code: 'initiator', label: 'Initiator' },
+    { code: 'initiator_leader', label: 'Department leader' },
+    { code: 'leader_chain', label: 'Leader chain' },
+    { code: 'form_field', label: 'Form field' }, { code: 'previous', label: 'Previous approver' },
+    { code: 'self_select', label: 'Initiator selects' },
+  ]
+  const signModes = meta?.sign_modes || [
+    { code: 'any', label: 'Or-sign' }, { code: 'all', label: 'Countersign' },
+    { code: 'ratio', label: 'Ratio' }, { code: 'sequence', label: 'Sequential' },
+  ]
+  const emptyPolicies = meta?.empty_policies || [
+    { code: 'skip', label: 'Skip' }, { code: 'admin', label: 'Fallback admin' },
+    { code: 'auto_approve', label: 'Auto approve' }, { code: 'fail', label: 'Fail' },
+  ]
+  const timeoutActions = meta?.timeout_actions || [
+    { code: 'remind', label: 'Remind' }, { code: 'auto_approve', label: 'Auto approve' },
+    { code: 'auto_reject', label: 'Auto reject' }, { code: 'transfer_admin', label: 'Transfer admin' },
+  ]
+  const csv = (v: any) => Array.isArray(v) ? v.join(', ') : (v || '')
+  const setList = (k: string, v: string) => patchConfig(k,
+    v.split(',').map((x) => x.trim()).filter(Boolean))
+  const toggle = (k: string) => <div className="flex items-center justify-between rounded-lg border px-2.5 py-1.5">
+    <span className="text-[11px] font-medium">{t(`workflows.cfg.${k}`)}</span>
+    <Switch checked={!!cfg[k]} onCheckedChange={(v) => patchConfig(k, v)} /></div>
+
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 rounded-lg border bg-muted/30 p-2">
         <Icon className="h-4 w-4 text-primary" /><span className="text-xs font-medium">{node.type}</span>
         <span className="ml-auto font-mono text-[10px] text-muted-foreground">{node.id}</span>
       </div>
-      <Field label={t('workflows.nodeName')}><Input value={node.name} onChange={(e) => patch(node.id, { name: e.target.value })} /></Field>
-      {(node.type === 'form') && <Field label={t('workflows.formCode')}><Input value={cfg.form_code || ''} onChange={(e) => patchConfig('form_code', e.target.value)} /></Field>}
-      {node.type === 'condition' && <>
-        <Field label={t('workflows.conditionField')}><Input value={cfg.field || ''} onChange={(e) => patchConfig('field', e.target.value)} /></Field>
-        <Field label={t('workflows.operator')}><Select value={cfg.operator || 'gt'} onValueChange={(v) => patchConfig('operator', v)}
-          options={operators.map((o) => ({ value: o, label: o }))} /></Field>
-        <Field label={t('workflows.conditionValue')}><Input value={String(cfg.value ?? '')} onChange={(e) => patchConfig('value', isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value))} /></Field>
+      <Field label={t('workflows.nodeName')}>
+        <Input value={node.name} onChange={(e) => patch(node.id, { name: e.target.value })} /></Field>
+
+      {['start', 'form', 'subflow'].includes(node.type) && <Field label={t('workflows.formCode')}>
+        <Input value={cfg.form_code || cfg.workflow_code || ''}
+          placeholder={node.type === 'subflow' ? 'workflow code' : 'form code'}
+          onChange={(e) => patchConfig(node.type === 'subflow' ? 'workflow_code' : 'form_code', e.target.value)} />
+      </Field>}
+      {node.type === 'form' && <Field label={t('workflows.assignee')}>
+        <Input value={cfg.assignee || ''} onChange={(e) => patchConfig('assignee', e.target.value)} /></Field>}
+
+      {['approval', 'cc'].includes(node.type) && <>
+        <Field label={t('workflows.cfg.approver_rule')}>
+          <Select value={cfg.approver_rule || 'roles'}
+            onValueChange={(v) => patchConfig('approver_rule', v)}
+            options={rules.map((r) => ({ value: r.code, label: r.label }))} /></Field>
+        {['users', 'roles', 'departments', 'cc'].includes(cfg.approver_rule || '') &&
+          <Field label={t('workflows.assignees')} hint="comma separated">
+            <Input value={csv(cfg.assignees || cfg.roles || cfg.departments)}
+              placeholder="admin, alice"
+              onChange={(e) => setList(cfg.approver_rule === 'roles' ? 'roles'
+                : cfg.approver_rule === 'departments' ? 'departments' : 'assignees', e.target.value)} /></Field>}
+        {['initiator_leader', 'leader_chain'].includes(cfg.approver_rule || '') &&
+          <Field label={t('workflows.cfg.leader_level')}>
+            <Input type="number" min={1} max={5} value={cfg.leader_level ?? 1}
+              onChange={(e) => patchConfig('leader_level', Number(e.target.value))} /></Field>}
+        {cfg.approver_rule === 'form_field' && <Field label={t('workflows.cfg.form_field')}>
+          <Input value={cfg.form_field || ''} onChange={(e) => patchConfig('form_field', e.target.value)} /></Field>}
       </>}
-      {node.type === 'approval' && <Field label={t('workflows.approverRole')}><Input value={cfg.approver_role || ''} onChange={(e) => patchConfig('approver_role', e.target.value)} /></Field>}
-      {node.type === 'ai' && <Field label={t('workflows.prompt')}><Textarea rows={3} value={cfg.prompt || ''} onChange={(e) => patchConfig('prompt', e.target.value)} /></Field>}
-      {node.type === 'knowledge' && <Field label={t('workflows.query')}><Input value={cfg.query || ''} onChange={(e) => patchConfig('query', e.target.value)} /></Field>}
+
+      {node.type === 'approval' && <>
+        <Field label={t('workflows.cfg.sign_mode')}>
+          <Select value={cfg.sign_mode || cfg.mode || 'any'}
+            onValueChange={(v) => { patchConfig('sign_mode', v); patchConfig('mode', v) }}
+            options={signModes.map((m) => ({ value: m.code, label: m.label }))} /></Field>
+        {(cfg.sign_mode || cfg.mode) === 'ratio' && <Field label={t('workflows.cfg.ratio')}>
+          <Input type="number" step="0.1" min="0" max="1" value={cfg.ratio ?? 0.5}
+            onChange={(e) => patchConfig('ratio', Number(e.target.value))} /></Field>}
+        <div className="grid grid-cols-2 gap-2">
+          <Field label={t('workflows.cfg.empty_policy')}>
+            <Select value={cfg.empty_policy || 'skip'} onValueChange={(v) => patchConfig('empty_policy', v)}
+              options={emptyPolicies.map((x) => ({ value: x.code, label: x.label }))} /></Field>
+          <Field label={t('workflows.cfg.timeout_action')}>
+            <Select value={cfg.timeout_action || 'remind'} onValueChange={(v) => patchConfig('timeout_action', v)}
+              options={timeoutActions.map((x) => ({ value: x.code, label: x.label }))} /></Field>
+        </div>
+        <Field label={t('workflows.cfg.timeout_hours')}>
+          <Input type="number" min={1} value={cfg.timeout_hours ?? 24}
+            onChange={(e) => patchConfig('timeout_hours', Number(e.target.value))} /></Field>
+        <Field label={t('workflows.cfg.reject_policy')}>
+          <Select value={cfg.reject_policy || 'terminate'} onValueChange={(v) => patchConfig('reject_policy', v)}
+            options={[{ value: 'terminate', label: 'Terminate' }, { value: 'return', label: 'Return to initiator' }]} />
+        </Field>
+        {toggle('exclude_initiator')}
+        {toggle('comment_required')}
+        {toggle('signature_required')}
+        {toggle('allow_return')}
+        {toggle('allow_transfer')}
+        {toggle('allow_addsign')}
+        <Field label={t('workflows.cfg.field_permissions')} hint='JSON: {"field_key":"readonly"}'>
+          <Textarea rows={3} className="font-mono text-[10px]"
+            value={JSON.stringify(cfg.field_permissions || {})}
+            onChange={(e) => { try { patchConfig('field_permissions', JSON.parse(e.target.value)) }
+              catch { /* keep typing */ } }} /></Field>
+      </>}
+
+      {node.type === 'condition' && <>
+        <Field label={t('workflows.cfg.logic')}>
+          <Select value={cfg.logic || 'and'} onValueChange={(v) => patchConfig('logic', v)}
+            options={[{ value: 'and', label: 'AND' }, { value: 'or', label: 'OR' }]} /></Field>
+        <Field label={t('workflows.cfg.conditions')} hint='JSON: [{"field":"amount","operator":"gt","value":5000}]'>
+          <Textarea rows={4} className="font-mono text-[10px]"
+            value={JSON.stringify(cfg.conditions || [])}
+            onChange={(e) => { try { patchConfig('conditions', JSON.parse(e.target.value)) }
+              catch { /* keep typing */ } }} /></Field>
+        <Field label={t('workflows.conditionField')}>
+          <Input value={cfg.field || ''} onChange={(e) => patchConfig('field', e.target.value)} /></Field>
+        <Field label={t('workflows.operator')}>
+          <Select value={cfg.operator || 'gt'} onValueChange={(v) => patchConfig('operator', v)}
+            options={operators.map((o) => ({ value: o, label: o }))} /></Field>
+        <Field label={t('workflows.conditionValue')}>
+          <Input value={String(cfg.value ?? '')}
+            onChange={(e) => patchConfig('value', isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value))} />
+        </Field>
+      </>}
+
+      {node.type === 'join' && <Field label={t('workflows.cfg.join_mode')}>
+        <Select value={cfg.join_mode || 'all'} onValueChange={(v) => patchConfig('join_mode', v)}
+          options={[{ value: 'all', label: 'All branches' }, { value: 'any', label: 'Any branch' }]} /></Field>}
+      {node.type === 'delay' && <Field label={t('workflows.cfg.delay_hours')}>
+        <Input type="number" min={0} value={cfg.delay_hours ?? 1}
+          onChange={(e) => patchConfig('delay_hours', Number(e.target.value))} /></Field>}
+      {node.type === 'ai' && <Field label={t('workflows.prompt')}>
+        <Textarea rows={3} value={cfg.prompt || ''} onChange={(e) => patchConfig('prompt', e.target.value)} /></Field>}
+      {node.type === 'knowledge' && <Field label={t('workflows.query')}>
+        <Input value={cfg.query || ''} onChange={(e) => patchConfig('query', e.target.value)} /></Field>}
       {node.type === 'http' && <>
-        <Field label={t('workflows.method')}><Select value={cfg.method || 'POST'} onValueChange={(v) => patchConfig('method', v)}
-          options={['GET', 'POST', 'PUT', 'DELETE'].map((m) => ({ value: m, label: m }))} /></Field>
-        <Field label={t('workflows.url')}><Input value={cfg.url || ''} onChange={(e) => patchConfig('url', e.target.value)} /></Field>
+        <Field label={t('workflows.method')}>
+          <Select value={cfg.method || 'POST'} onValueChange={(v) => patchConfig('method', v)}
+            options={['GET', 'POST', 'PUT', 'DELETE'].map((m) => ({ value: m, label: m }))} /></Field>
+        <Field label={t('workflows.url')}>
+          <Input value={cfg.url || ''} onChange={(e) => patchConfig('url', e.target.value)} /></Field>
       </>}
       {node.type === 'notification' && <>
-        <Field label={t('workflows.channel')}><Input value={cfg.channel || ''} onChange={(e) => patchConfig('channel', e.target.value)} /></Field>
-        <Field label={t('workflows.template')}><Input value={cfg.template || ''} onChange={(e) => patchConfig('template', e.target.value)} /></Field>
+        <Field label={t('workflows.channel')}>
+          <Input value={cfg.channel || ''} onChange={(e) => patchConfig('channel', e.target.value)} /></Field>
+        <Field label={t('workflows.template')}>
+          <Input value={cfg.template || ''} onChange={(e) => patchConfig('template', e.target.value)} /></Field>
       </>}
-      <Button variant="outline" size="sm" className="w-full" onClick={() => remove(node.id)}><Trash2 className="h-3.5 w-3.5 text-destructive" />{t('workflows.deleteNode')}</Button>
+      <Button variant="outline" size="sm" className="w-full" onClick={() => remove(node.id)}>
+        <Trash2 className="h-3.5 w-3.5 text-destructive" />{t('workflows.deleteNode')}</Button>
     </div>
   )
 }

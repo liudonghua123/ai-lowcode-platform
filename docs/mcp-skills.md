@@ -61,7 +61,7 @@ Seed startup: `seed.ensure_registries()` idempotently provisions `platform-built
 | `mcp_skill_files` | Editable skill files (authoritative) | `skill_id`, `path` (unique per skill), `content`, `language`, `size`, `updated_at` |
 | `mcp_call_logs` | Invocation journal | `method`, `tool`, `source`, `transport`, `actor`, `arguments` JSON, `status`, `error`, `result_preview`, `duration_ms`, `request_id`, **`target`**, `created_at` |
 
-10 indexes total: `idx_submissions_form`, `idx_instances_wf`, `idx_kbdocs_collection`, `idx_audit_created`, `idx_mcp_calls_created`, `idx_mcp_calls_tool`, `idx_skill_files_skill`, `idx_ai_providers_category`, `idx_mcp_servers_enabled`, `idx_kbdocs_file_type`. `db.init_db()` runs `SCHEMA` → `_migrate()` → `INDEX_SCHEMA`, so indexes on newly migrated columns (`file_type`, `enabled`, `target`) are created only after the columns exist. New columns on existing databases are added by `PRAGMA table_info` + `ALTER TABLE`.
+**17 indexes total.** The original 10: `idx_submissions_form`, `idx_instances_wf`, `idx_kbdocs_collection`, `idx_audit_created`, `idx_mcp_calls_created`, `idx_mcp_calls_tool`, `idx_skill_files_skill`, `idx_ai_providers_category`, `idx_mcp_servers_enabled`, `idx_kbdocs_file_type`. The 7 added by the domestic form/approval runtime ([FFC-001](form-flow-domestic.md)): `idx_form_versions_form`, `idx_wf_versions_wf`, `idx_flow_tasks_instance`, `idx_flow_tasks_assignee`, `idx_flow_delegations_principal`, `idx_org_units_parent`, `idx_submissions_serial`. `db.init_db()` runs `SCHEMA` → `_migrate()` → `INDEX_SCHEMA`, so indexes on newly migrated columns (`file_type`, `enabled`, `target`, `serial_no`) are created only after the columns exist. New columns on existing databases are added by `PRAGMA table_info` + `ALTER TABLE`. See [Data Model](data-model.md#4-indexes-17) for the full index table.
 
 ## 4. MCP server registry
 
@@ -171,7 +171,7 @@ Tool-level authorization still uses `PERMISSION_MAP` inside `call_tool` (see ADR
 
 ## 10. Validation
 
-`backend/tests/smoke.py` — **116 assertions**, including journal recording/statistics/export/clear, catalog, install with file creation, file CRUD, path-traversal rejection, enable/disable/uninstall/reinstall and permanent delete; MCP server independent registration, sync, tools, invoke rejection, enable and delete; skill deletion leaving servers intact; agent bindings with stale-id cleanup; AI provider categories/defaults/key masking; multi-format upload and unsupported-format rejection. `POST /mcp` `initialize` / `tools/list` / `tools/call` remain 200 after the ASGI body-buffering change. `pnpm typecheck`, `pnpm build`, `pnpm check:i18n` (651 en/zh keys), `pnpm build` and `ruff check app tests` all pass.
+`backend/tests/smoke.py` — **157 assertions**, including journal recording/statistics/export/clear, catalog, install with file creation, file CRUD, path-traversal rejection, enable/disable/uninstall/reinstall and permanent delete; MCP server independent registration, sync, tools, invoke rejection, enable and delete; skill deletion leaving servers intact; agent bindings with stale-id cleanup; AI provider categories/defaults/key masking; multi-format upload and unsupported-format rejection. `POST /mcp` `initialize` / `tools/list` / `tools/call` remain 200 after the ASGI body-buffering change. `pnpm typecheck`, `pnpm build`, `pnpm check:i18n` (740 en/zh keys), `pnpm build` and `ruff check app tests` all pass.
 
 ## 11. Production considerations
 

@@ -7,9 +7,9 @@
 | Version | 1.0 |
 | Applies to | `ai-lowcode-platform` v0.1.0 |
 | Machine-readable source | `GET /openapi.json`, interactive UI at `GET /docs` |
-| Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Security Architecture](security.md) · [Data Model](data-model.md) |
+| Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Security Architecture](security.md) · [Data Model](data-model.md) · [Domestic Form & Approval](form-flow-domestic.md) · [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md) |
 
-> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **97 个 OpenAPI 路径 / 133 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 12 个平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank 多类别模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
+> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **120 个 OpenAPI 路径 / 157 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 12 个平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank/Vision 六类模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。**国内场景增强**：`/forms` 提供 44 种字段的目录、服务端法定校验、公式求值、版本快照、打印视图与 CSV 导出；`/workflows` 提供 14 种节点、会签/并行/汇聚的人工审批运行时、任务中心、转交/加签/撤回/催办、超时与委托，详见 [国内表单与审批规范](form-flow-domestic.md)。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
 
 ## 1. Conventions
 
@@ -42,7 +42,7 @@
 }
 ```
 
-## 2. REST endpoints (97 paths)
+## 2. REST endpoints (120 paths)
 
 ### 2.1 Authentication & MFA — `/auth`
 
@@ -65,26 +65,57 @@
 
 ### 2.2 Forms — `/forms`
 
-| Methods | Path | Permission |
-| --- | --- | --- |
-| GET, POST | `/forms` | `form:read` / `form:write` |
-| GET | `/forms/field-types` | `form:read` (15 field types) |
-| GET | `/forms/code/{code}` | `form:read` |
-| GET, PUT, DELETE | `/forms/{form_id}` | `form:read` / `form:write` / `form:delete` |
-| POST | `/forms/{form_id}/publish` | `form:publish` |
-| GET, POST | `/forms/{form_id}/submissions` | `form:read` / `form:submit` |
+The designer palette, validators, operators, formula functions, permission modes and the China-localized field catalog come from `services/form_catalog.py` (`GET /forms/meta?lang=en|zh`). All statutory validation, formula evaluation, visibility rules and node field permissions are enforced server-side by `services/form_rules.py`; the live preview calls `/evaluate`, which uses the same engine as `/submissions`.
+
+| Methods | Path | Permission | Purpose |
+| --- | --- | --- | --- |
+| GET | `/forms/meta` | `form:read` | 44 field types in 5 groups, validators, operators, 19 functions, permission modes |
+| GET | `/forms/field-types` | `form:read` | Flat list of the 44 field types |
+| GET | `/forms/regions` | `form:read` | GB/T 2260 administrative-division sample for `region` fields |
+| GET, POST | `/forms` | `form:read` / `form:write` | List / create a definition (auto version snapshot) |
+| GET | `/forms/code/{code}` | `form:read` | Fetch by stable code |
+| GET, PUT, DELETE | `/forms/{form_id}` | `form:read` / `form:write` | Read / update (auto snapshot) / delete |
+| POST | `/forms/{form_id}/publish` | `form:publish` | Publish so it accepts submissions |
+| POST | `/forms/{form_id}/evaluate` | `form:read` | Live computed values, summaries, visible/hidden keys, permissions, errors |
+| POST | `/forms/{form_id}/validate` | `form:read` | Same validation engine, no persistence |
+| GET, POST | `/forms/{form_id}/versions` | `form:read` / `form:write` | List snapshots; restore one with `{"version": n}` |
+| GET | `/forms/{form_id}/render` | `form:read` | Desktop/mobile render schema with node field permissions |
+| GET | `/forms/{form_id}/print/{submission_id}` | `form:read` | Structured print view incl. RMB amount in words |
+| GET | `/forms/{form_id}/submissions` | `form:read` | List submissions |
+| GET | `/forms/{form_id}/submissions/export` | `form:read` | UTF-8 BOM CSV export for Excel |
+| POST | `/forms/{form_id}/submissions` | `form:submit` | Validate, compute, generate `serial_no`, persist |
+| PATCH | `/forms/{form_id}/submissions/{submission_id}` | `form:write` | Change status (`submitted`/`approved`/`rejected`/`archived`/`draft`) |
+
+`GET /meta/bootstrap` additionally returns `form.validators`, `form.functions`, `form.permission_modes`, `workflow.approver_rules`, `workflow.sign_modes` and `workflow.actions`. See [FFC-001](form-flow-domestic.md).
 
 ### 2.3 Workflows — `/workflows`
 
-| Methods | Path | Permission |
-| --- | --- | --- |
-| GET, POST | `/workflows` | `workflow:read` / `workflow:write` |
-| GET | `/workflows/node-types` | `workflow:read` (9 node types) |
-| GET, PUT, DELETE | `/workflows/{workflow_id}` | `workflow:read` / `workflow:write` / `workflow:delete` |
-| POST | `/workflows/{workflow_id}/validate` | `workflow:read` |
-| POST | `/workflows/{workflow_id}/run` | `workflow:run` |
-| GET | `/workflows/{workflow_id}/instances` | `workflow:read` |
-| GET | `/workflows/instances/{instance_id}` | `workflow:read` |
+Two runtimes coexist: `services/workflow_engine.py` keeps the original synchronous DAG dry-run (`/run`), while `services/flow_runtime.py` drives long-running human approval instances (`/start` → `/instances/.../act`). Instances pin a graph snapshot plus `workflow_version`, so editing a definition never changes an in-flight approval.
+
+| Methods | Path | Permission | Purpose |
+| --- | --- | --- | --- |
+| GET | `/workflows/meta` | `workflow:read` | 14-node palette, 9 approver rules, 4 sign modes, empty/timeout policies, actions |
+| GET | `/workflows/node-types` | `workflow:read` | Node palette metadata for the canvas |
+| GET, POST | `/workflows` | `workflow:read` / `workflow:write` | List / create a definition (auto version snapshot) |
+| GET, PUT, DELETE | `/workflows/{workflow_id}` | `workflow:read` / `workflow:write` | Read / update (auto snapshot) / delete |
+| POST | `/workflows/{workflow_id}/publish` | `workflow:write` | Publish the definition |
+| GET, POST | `/workflows/{workflow_id}/versions` | `workflow:read` / `workflow:write` | List snapshots; restore one with `{"version": n}` |
+| POST | `/workflows/{workflow_id}/validate` | `workflow:read` | Graph validation (start/end, cycles, join/sign modes) |
+| POST | `/workflows/{workflow_id}/run` | `workflow:run` | Synchronous dry-run simulator (legacy) |
+| POST | `/workflows/{workflow_id}/start` | `workflow:run` | Create a long-running approval instance (optional linked form submission) |
+| GET | `/workflows/{workflow_id}/instances` | `workflow:read` | Instances of one workflow |
+| GET | `/workflows/tasks` | `workflow:read` | Task center: pending / done tasks for the current user |
+| GET | `/workflows/instances/{instance_id}` | `workflow:read` | Instance view with tasks and timeline |
+| GET | `/workflows/instances/{instance_id}/tasks` | `workflow:read` | Tasks of an instance |
+| GET | `/workflows/instances/{instance_id}/timeline` | `workflow:read` | Approval timeline |
+| GET | `/workflows/instances/{instance_id}/form-schema` | `workflow:read` | Bound form schema merged with active node `field_permissions` |
+| POST | `/workflows/instances/{instance_id}/tasks/{task_id}/act` | `workflow:run` | `approve` / `reject` / `return` / `transfer` / `addsign_before` / `addsign_after` |
+| POST | `/workflows/instances/{instance_id}/withdraw` | `workflow:run` | Initiator cancels a running instance |
+| POST | `/workflows/instances/{instance_id}/urge` | `workflow:run` | Remind all pending assignees |
+| POST | `/workflows/instances/sweep-timeouts` | `workflow:run` | Apply per-node timeout policies to overdue tasks |
+| GET, POST, DELETE | `/workflows/delegations[/{delegation_id}]` | `workflow:read` / `workflow:write` | Approval delegation rules (principal → agent, time window) |
+
+Approver rules: `users`, `roles`, `departments`, `initiator`, `initiator_leader`, `leader_chain`, `form_field`, `previous`, `self_select`. Signing modes: `any` (或签), `all` (会签), `ratio`, `sequence` (依次审批). `comment_required` / `signature_required` and node-level `field_permissions` are enforced server-side. See [FFC-001](form-flow-domestic.md) and [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md).
 
 ### 2.4 Knowledge base — `/knowledge`
 
@@ -268,9 +299,29 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/jso
   http://localhost:8000/api/v1/agents/1/chat
 ```
 
+**Domestic approval: start → task center → act → timeline**
+
+```bash
+# Start the seeded expense_approval workflow with its bound expense_claim form
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"form_data":{"title":"客户拜访报销","department":"IT","mobile":"13800138000",\
+       "remark":"客户拜访","items":[{"name":"高铁票","qty":2,"price":320}]}}' \
+  http://localhost:8000/api/v1/workflows/2/start       # → {id, current_nodes, status}
+
+# Personal task center
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/workflows/tasks
+
+# Approve one task (other actions: reject / return / transfer / addsign_before / addsign_after)
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"action":"approve","comment":"同意","signature":""}' \
+  http://localhost:8000/api/v1/workflows/instances/1/tasks/1/act
+
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/workflows/instances/1/timeline
+```
+
 ## 6. Versioning and compatibility
 
 - All business endpoints are versioned under `/api/v1`; breaking changes require a new prefix.
 - MCP protocol version is negotiated during `initialize` (no hard-coded client requirement).
 - `/openapi.json` is the authoritative machine-readable contract; regenerate this table when routers change.
-- `scripts/smoke.py` (116 assertions) exercises the critical subset of these endpoints end-to-end.
+- `backend/tests/smoke.py` (157 assertions) exercises the critical subset of these endpoints end-to-end, including the full domestic expense approval chain.

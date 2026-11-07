@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS forms (
   schema TEXT NOT NULL DEFAULT '[]',
   layout TEXT NOT NULL DEFAULT '{}',
   version INTEGER NOT NULL DEFAULT 1,
+  print_template TEXT NOT NULL DEFAULT '{}',
+  settings TEXT NOT NULL DEFAULT '{}',
   created_by TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -87,6 +89,11 @@ CREATE TABLE IF NOT EXISTS form_submissions (
   data TEXT NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'submitted',
   submitted_by TEXT,
+  form_version INTEGER NOT NULL DEFAULT 1,
+  serial_no TEXT,
+  flow_instance_id INTEGER,
+  computed TEXT,
+  updated_at TEXT,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS workflows (
@@ -97,6 +104,7 @@ CREATE TABLE IF NOT EXISTS workflows (
   status TEXT NOT NULL DEFAULT 'draft',
   graph TEXT NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
   version INTEGER NOT NULL DEFAULT 1,
+  form_code TEXT,
   created_by TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -107,6 +115,12 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
   status TEXT NOT NULL DEFAULT 'running',
   context TEXT NOT NULL DEFAULT '{}',
   logs TEXT NOT NULL DEFAULT '[]',
+  graph TEXT NOT NULL DEFAULT '{}',
+  form_data TEXT NOT NULL DEFAULT '{}',
+  form_code TEXT,
+  current_nodes TEXT NOT NULL DEFAULT '[]',
+  variables TEXT NOT NULL DEFAULT '{}',
+  workflow_version INTEGER NOT NULL DEFAULT 1,
   started_by TEXT,
   started_at TEXT NOT NULL,
   finished_at TEXT
@@ -277,6 +291,77 @@ CREATE TABLE IF NOT EXISTS mfa_challenges (
   consumed INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
+
+-- Form definition snapshots, so a published form can be rolled back safely.
+CREATE TABLE IF NOT EXISTS form_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  form_id INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  schema TEXT NOT NULL DEFAULT '[]',
+  layout TEXT NOT NULL DEFAULT '{}',
+  print_template TEXT NOT NULL DEFAULT '{}',
+  settings TEXT NOT NULL DEFAULT '{}',
+  note TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+
+-- Workflow definition snapshots; running instances pin the version they started on.
+CREATE TABLE IF NOT EXISTS workflow_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_id INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  graph TEXT NOT NULL DEFAULT '{}',
+  form_code TEXT,
+  note TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+
+-- Human approval tasks. One row per assignee per node activation.
+CREATE TABLE IF NOT EXISTS flow_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  instance_id INTEGER NOT NULL,
+  node_id TEXT NOT NULL,
+  node_name TEXT,
+  node_type TEXT,
+  assignee TEXT NOT NULL,
+  seq INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  decision TEXT,
+  comment TEXT,
+  signature TEXT,
+  due_at TEXT,
+  acted_at TEXT,
+  created_at TEXT NOT NULL,
+  delegated_from TEXT,
+  round INTEGER NOT NULL DEFAULT 1
+);
+
+-- Delegation / agent rules: while active, tasks are auto-assigned to the agent.
+CREATE TABLE IF NOT EXISTS flow_delegations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  principal TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  scope TEXT,
+  starts_at TEXT,
+  ends_at TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+
+-- Minimal organization graph for leader-chain and department approver rules.
+CREATE TABLE IF NOT EXISTS org_units (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  parent_code TEXT,
+  level INTEGER NOT NULL DEFAULT 1,
+  leader TEXT,
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 """
 
 # Indexes are created *after* the idempotent column migration, because some of
@@ -292,11 +377,40 @@ CREATE INDEX IF NOT EXISTS idx_skill_files_skill ON mcp_skill_files(skill_id);
 CREATE INDEX IF NOT EXISTS idx_ai_providers_category ON ai_providers(category, is_default);
 CREATE INDEX IF NOT EXISTS idx_mcp_servers_enabled ON mcp_servers(enabled);
 CREATE INDEX IF NOT EXISTS idx_kbdocs_file_type ON kb_documents(file_type);
+CREATE INDEX IF NOT EXISTS idx_form_versions_form ON form_versions(form_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_wf_versions_wf ON workflow_versions(workflow_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_flow_tasks_instance ON flow_tasks(instance_id, round);
+CREATE INDEX IF NOT EXISTS idx_flow_tasks_assignee ON flow_tasks(assignee, status);
+CREATE INDEX IF NOT EXISTS idx_flow_delegations_principal ON flow_delegations(principal, enabled);
+CREATE INDEX IF NOT EXISTS idx_org_units_parent ON org_units(parent_code);
+CREATE INDEX IF NOT EXISTS idx_submissions_serial ON form_submissions(form_id, serial_no);
 """
 
 # Columns added after the first release. SQLite cannot add them through
 # CREATE TABLE IF NOT EXISTS on an existing database, so we migrate lazily.
 MIGRATIONS: dict[str, dict[str, str]] = {
+    "forms": {
+        "print_template": "TEXT NOT NULL DEFAULT '{}'",
+        "settings": "TEXT NOT NULL DEFAULT '{}'",
+    },
+    "form_submissions": {
+        "form_version": "INTEGER NOT NULL DEFAULT 1",
+        "serial_no": "TEXT",
+        "flow_instance_id": "INTEGER",
+        "computed": "TEXT",
+        "updated_at": "TEXT",
+    },
+    "workflows": {
+        "form_code": "TEXT",
+    },
+    "workflow_instances": {
+        "graph": "TEXT NOT NULL DEFAULT '{}'",
+        "form_data": "TEXT NOT NULL DEFAULT '{}'",
+        "form_code": "TEXT",
+        "current_nodes": "TEXT NOT NULL DEFAULT '[]'",
+        "variables": "TEXT NOT NULL DEFAULT '{}'",
+        "workflow_version": "INTEGER NOT NULL DEFAULT 1",
+    },
     "mcp_skills": {
         "status": "TEXT NOT NULL DEFAULT 'installed'",
         "version": "TEXT NOT NULL DEFAULT '1.0.0'",

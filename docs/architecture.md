@@ -8,11 +8,11 @@
 | Applies to | `ai-lowcode-platform` v0.1.0 |
 | Audience | Architects, backend/frontend engineers, SRE |
 | 中文 | [architecture.zh-CN.md](architecture.zh-CN.md) |
-| Related | [AI System Design](ai-design.md) · [Security Architecture](security.md) · [Data Model](data-model.md) · [API & MCP Reference](api-reference.md) · [ADR index](adr/README.md) |
+| Related | [AI System Design](ai-design.md) · [Security Architecture](security.md) · [Data Model](data-model.md) · [API & MCP Reference](api-reference.md) · [Domestic Form & Approval](form-flow-domestic.md) · [ADR index](adr/README.md) |
 
 ## 1. Purpose and scope
 
-This document describes the **as-built architecture** of the AI Low-Code Platform: a full-stack, front-end/back-end separated system that provides visual form design, visual DAG workflow orchestration, a versioned REST API, an MCP server with **independently managed MCP server and Skill registries**, multi-category AI model configuration, multi-format knowledge upload, knowledge-grounded AI query/action agents with declarative resource bindings, RBAC, five SSO protocols and role/user-scoped MFA.
+This document describes the **as-built architecture** of the AI Low-Code Platform: a full-stack, front-end/back-end separated system that provides a **China-localized form engine** (44 field types, statutory validators, formula sandbox, detail tables, conditional rules), a visual DAG workflow orchestrator plus a **long-running human approval runtime** (countersign, parallel/join, delegation, task actions), a versioned REST API, an MCP server with **independently managed MCP server and Skill registries**, multi-category AI model configuration, multi-format knowledge upload, knowledge-grounded AI query/action agents with declarative resource bindings, RBAC, five SSO protocols and role/user-scoped MFA. The domestic extension is specified in [FFC-001](form-flow-domestic.md) and [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md).
 
 **In scope:** system context, containers, backend/frontend components, runtime flows, data flow, deployment topology, cross-cutting concerns, quality attributes and evolution boundaries.
 
@@ -65,11 +65,11 @@ flowchart LR
     subgraph Process["uvicorn :8000 (FastAPI)"]
         API["REST layer<br/>/api/v1 · 13 routers"]
         MCPS["MCP server<br/>/mcp · fastmcp + builtin fallback"]
-        SVC["Service layer<br/>workflow_engine · rag · llm<br/>mcp_tools · mcp_servers<br/>model_providers · documents"]
+        SVC["Service layer<br/>workflow_engine · flow_runtime · rag · llm<br/>form_catalog · form_rules · mcp_tools · mcp_servers<br/>model_providers · documents"]
         SEC["Security layer<br/>JWT · PBKDF2 · TOTP<br/>WebAuthn · RBAC"]
         HOST["SPA static host<br/>frontend/dist fallback"]
     end
-    DB[(SQLite<br/>WAL · 21 tables)]
+    DB[(SQLite<br/>WAL · 26 tables)]
     FS[("dist/ static assets")]
 
     SPA -->|JSON + Bearer| API
@@ -86,7 +86,7 @@ flowchart LR
 | Container | Responsibility | Technology |
 | --- | --- | --- |
 | SPA | All UI, visual designers, i18n, theming | Vite 6, React 18, TypeScript, Tailwind 3, shadcn/ui-style components, lucide-react |
-| REST layer | 97 OpenAPI paths, Pydantic models, error semantics | FastAPI 0.128+, `APIRouter`, `Depends` |
+| REST layer | 120 OpenAPI paths, Pydantic models, error semantics | FastAPI 0.128+, `APIRouter`, `Depends` |
 | MCP server | MCP `initialize` / `tools/list` / `tools/call` / resources / prompts | `fastmcp` 4.1.6 `http_app(path="/mcp")`, builtin JSON-RPC fallback |
 | Service layer | Pure business logic, no HTTP concerns | Python modules in `app/services/` |
 | Security layer | Identity, tokens, password/MFA, permission checks | stdlib `hashlib`/`hmac`, HS256 JWT, `contextvars` |
@@ -111,7 +111,10 @@ app/
     ├── mcp_servers.py      MCP server registry, probe/sync, external tool bridge
     ├── model_providers.py  6 AI categories, key masking, effective_llm()
     ├── documents.py        stdlib-only multi-format parsing (OOXML/PDF/OCR/text)
-    ├── workflow_engine.py  DAG validation (cycle detection), condition routing, execution
+    ├── workflow_engine.py  DAG validation (14 node types), condition groups, dry-run execution
+    ├── flow_runtime.py     ★ long-running approval: assignee rules, signing modes, tasks, timeouts
+    ├── form_catalog.py     ★ 44 field types in 5 groups, validators, operators, functions
+    ├── form_rules.py       ★ statutory validation, AST formula sandbox, visibility, permissions
     ├── rag.py              mixed zh/en tokenizer, chunking, BM25, context assembly
     ├── llm.py              3 backends, ReAct orchestration, grounded answers
     └── sso.py              5 provider adapters, demo mode, identity provisioning
@@ -189,16 +192,22 @@ sequenceDiagram
     R-->>U: response with visible tool-call steps
 ```
 
-### 7.3 Workflow execution
+### 7.3 Workflow execution (synchronous dry-run)
 
-`validate_graph()` enforces exactly one `start`, at least one `end`, known node types, valid edge endpoints and no cycles (DFS three-state). `run()` walks the DAG, evaluates `condition` nodes against context (`gt/gte/lt/lte/eq/ne/contains`), dispatches `form/approval/ai/knowledge/http/notification` nodes, and returns `{status, context, logs}` persisted to `workflow_instances`.
+`validate_graph()` enforces exactly one `start`, at least one `end`, known node types, valid edge endpoints and no cycles (DFS three-state). `run()` walks the DAG, evaluates `condition` nodes against context (`gt/gte/lt/lte/eq/ne/contains` plus condition groups), dispatches `form/approval/ai/knowledge/http/notification/cc/parallel/join/delay/subflow` nodes, and returns `{status, context, logs}` persisted to `workflow_instances`.
+
+### 7.4 Long-running domestic approval instance
+
+`POST /workflows/{id}/start` creates an instance that **pins a graph snapshot** plus `workflow_version`, so later definition edits cannot change an in-flight approval. `services/flow_runtime.py` resolves assignees from 9 rules (`users`, `roles`, `departments`, `initiator`, `initiator_leader`, `leader_chain`, `form_field`, `previous`, `self_select`), applies active `flow_delegations`, then creates one `flow_tasks` row per assignee per node activation. Signing modes `any` / `all` / `ratio` / `sequence` decide when a node completes; `parallel` + `join` gate concurrent branches. Each `act` (approve / reject / return / transfer / add-sign) writes an audit log and a timeline entry; `withdraw`, `urge` and `sweep_timeouts()` cover initiator cancellation, reminders and overdue policies. `GET /workflows/instances/{id}/form-schema` merges the bound form schema with the active node's `field_permissions`, and `form_rules.validate_data()` enforces `editable` / `readonly` / `hidden` server-side. See [FFC-001](form-flow-domestic.md).
 
 ## 8. Data flow
 
 | Flow | Path | Storage |
 | --- | --- | --- |
 | Form definition | Designer → `PUT /forms/{id}` → JSON `schema` column | `forms`, `form_submissions` |
+| Form rules / versions | `POST /forms/{id}/evaluate` → `form_rules` → snapshot on publish | `form_versions`, `form_submissions.computed` |
 | Workflow graph | Canvas → `PUT /workflows/{id}` → JSON `graph` column | `workflows`, `workflow_instances` |
+| Approval instance | `POST /workflows/{id}/start` → `flow_runtime` → `/instances/.../act` | `workflow_versions`, `flow_tasks`, `flow_delegations`, `org_units` |
 | Knowledge (text) | Document create → `rag.index_document()` → JSON `chunks` | `kb_collections`, `kb_documents` |
 | Knowledge (upload) | Multipart → `documents.parse()` → `rag.index_document()` → file metadata + chunks | `kb_documents` |
 | Agent chat | Chat → `run_agent()` (bound tool scope) → conversation turns | `conversations`, `audit_logs` |
@@ -223,13 +232,13 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 
 | Concern | Implementation |
 | --- | --- |
-| i18n | 651 leaf keys per locale, default `en`, `localStorage`, `<html lang>` sync, English fallback |
+| i18n | 740 leaf keys per locale, default `en`, `localStorage`, `<html lang>` sync, English fallback |
 | Theme | `system` (default) / `light` / `dark`, `prefers-color-scheme` listener, HSL CSS variables, `meta[theme-color]` |
 | Audit | Every mutation → `audit_logs(actor, action, resource, detail, ip, level, created_at)` |
 | Configuration | `python-dotenv` → frozen `Settings`; `settings` table for runtime overrides |
 | Errors | `HTTPException` with 401 / 403 / 404 / 422; `ApiError` on the client; 401 triggers global logout |
 | Observability | `/api/v1/meta/health`, `/meta/stats`, `/agents/meta/runtime`, `/agents/meta/bindings`, `/mcp/status`, `/mcp/calls/stats`, `/knowledge/stats` |
-| Testing | `backend/tests/smoke.py` — 110 end-to-end assertions; `pnpm typecheck`, `pnpm build`, `pnpm check:i18n`, `ruff check` |
+| Testing | `backend/tests/smoke.py` — 157 end-to-end assertions; `pnpm typecheck`, `pnpm build`, `pnpm check:i18n`, `ruff check` |
 
 ## 11. Technology decisions (summary)
 
@@ -243,6 +252,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | RBAC + policy-driven MFA + demo SSO | Complete auth surface without external IdP | [0006](adr/0006-rbac-mfa-and-sso.md) |
 | Skill lifecycle, editable files and call journal | Auditable third-party capability management | [0007](adr/0007-mcp-skill-lifecycle-and-journal.md) |
 | Split MCP servers / Skills, AI model providers, knowledge upload, agent bindings | Independent registries and configurable model / knowledge resources | [0008](adr/0008-mcp-skills-split-model-providers-and-knowledge-upload.md) |
+| Domestic form engine + long-running human approval runtime | Cover China enterprise/government form & approval scenarios without a relational per-field schema | [0009](adr/0009-domestic-forms-and-approval-runtime.md) |
 
 ## 12. Quality attributes and trade-offs
 
@@ -252,7 +262,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | Security | HS256 JWT, PBKDF2, per-route RBAC, audit | RS256/rotating keys, rate limiting, secret manager |
 | AI accuracy | Deterministic mock + BM25 grounding | Real LLM, vector/embedding store, reranking |
 | Scalability | In-process indexes, synchronous execution | Task queue for workflow runs, external vector DB |
-| Testability | 110 smoke assertions, no network required | Contract tests, load tests, MCP conformance suite |
+| Testability | 157 smoke assertions, no network required | Contract tests, load tests, MCP conformance suite |
 | Operability | Health/stats/runtime endpoints | Structured logging, metrics, tracing |
 
 ## 13. Known limitations
@@ -261,15 +271,17 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 - `mock` LLM uses regex intent detection — it is deterministic, not generative.
 - WebAuthn uses challenge/credential binding without full attestation verification; `PASSKEY_ORIGIN` must match the deployment (HTTPS or localhost).
 - SSO demo mode provisions local users without real IdP validation; production requires real credentials and TLS.
-- The workflow engine executes synchronously in the request; long-running flows should move to a queue.
+- The **synchronous** `/run` dry-run still executes inside the request; real human approvals use persisted long-running instances, but `subflow`, `delay`, `signature`/`attachment` storage and the GB/T 2260 region sample remain simulated or partial (see [FFC-001 §7](form-flow-domestic.md)). A task queue is still the production path for very long flows.
 
 ## 14. Traceability
 
 | Requirement | Design element | Code |
 | --- | --- | --- |
 | Visual form design | Metadata-driven designer | `routers/forms.py`, `pages/Forms.tsx` |
+| Domestic forms (FFC-001) | 44-field catalog, statutory validation, AST formulas, versions, print/CSV | `services/form_catalog.py`, `services/form_rules.py`, `routers/forms.py`, `pages/Forms.tsx` |
 | Visual workflow orchestration | DAG validator + engine | `services/workflow_engine.py`, `pages/Workflows.tsx` |
-| REST API | Versioned routers | `routers/*.py` (133 route decorators → 97 OpenAPI paths) |
+| Human approval runtime (ADR-0009) | Long-running instances, countersign, parallel/join, task actions, delegation | `services/flow_runtime.py`, `routers/workflows.py`, `pages/Workflows.tsx` |
+| REST API | Versioned routers | `routers/*.py` (157 route decorators → 120 OpenAPI paths) |
 | MCP transport + tool registry | Dual-transport MCP + single registry | `mcp_server.py`, `routers/mcp.py`, `services/mcp_tools.py` |
 | MCP servers (independent) | CRUD, probe/sync, declared tools, remote invoke | `routers/mcp_servers.py`, `services/mcp_servers.py`, `mcp_servers` |
 | Skills (independent) | Lifecycle, catalog, editable files, `server_id` link | `routers/skills.py`, `services/skill_*.py`, `mcp_skills` |

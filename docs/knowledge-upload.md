@@ -124,7 +124,7 @@ Each created row is `source=upload`, `status=indexed` (or `empty`), and is passe
 
 ## 7. Validation
 
-`backend/tests/smoke.py` (116 assertions) covers: format catalog, plain Markdown/TXT/CSV, OOXML fixtures (docx/xlsx/pptx), PDF via `pdftotext`, JSON/YAML, unsupported-extension rejection, empty-file rejection, per-file failure isolation, document metadata, immediate BM25 retrieval of uploaded content, and `GET /knowledge/stats` upload counters. `ruff check app tests`, `pnpm typecheck`, `pnpm build` and `pnpm check:i18n` (651 en/zh keys) all pass.
+`backend/tests/smoke.py` (157 assertions) covers: format catalog, plain Markdown/TXT/CSV, OOXML fixtures (docx/xlsx/pptx), PDF via `pdftotext`, JSON/YAML, unsupported-extension rejection, empty-file rejection, per-file failure isolation, document metadata, immediate BM25 retrieval of uploaded content, and `GET /knowledge/stats` upload counters. `ruff check app tests`, `pnpm typecheck`, `pnpm build` and `pnpm check:i18n` (740 en/zh keys) all pass.
 
 ## 8. Limitations and production considerations
 

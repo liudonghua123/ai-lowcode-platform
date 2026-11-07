@@ -50,7 +50,7 @@ ADR-0005 and ADR-0007 remain Accepted for their transport, auth, lifecycle and j
 - Only `llm` is wired into inference; `asr` / `tts` / `embedding` / `rerank` / `vision` are declarative placeholders and could mislead operators if not read with AIM-001 §8.
 - Document parsing is best-effort (text only, no tables/layout fidelity); legacy Office and OCR depend on host CLI tools.
 - Provider keys are plaintext in SQLite; external MCP servers are trusted once registered, and `call_remote_tool` widens the reachable tool surface (still gated by `mcp:invoke`).
-- Three new routers plus two new services increase surface area; the smoke suite grew from 69 to 116 assertions to compensate.
+- Three new routers plus two new services increase surface area; the smoke suite grew from 69 to 157 assertions to compensate.
 
 ## Alternatives considered
 
@@ -69,13 +69,13 @@ Falsifiable checks (all green at acceptance):
 ```bash
 cd backend
 python3 -m ruff check app tests                    # All checks passed
-python3 tests/smoke.py                             # 116 passed, 0 failed
-python3 -c "from app.main import app; print(len(app.openapi()['paths']))"   # 96
+python3 tests/smoke.py                             # 157 passed, 0 failed
+python3 -c "from app.main import app; print(len(app.openapi()['paths']))"   # 120
 python3 -c "from app import db; print(db.SCHEMA.count('CREATE TABLE'), db.INDEX_SCHEMA.count('CREATE INDEX'))"  # 21 10
 
 cd ../frontend
 pnpm typecheck && pnpm build
-pnpm check:i18n                                    # en 651 / zh 651, 0 missing
+pnpm check:i18n                                    # en 740 / zh 740, 0 missing
 ```
 
 Endpoints to exercise: `GET /mcp/servers`, `POST /mcp/servers/{id}/sync`, `GET /mcp/servers/{id}/tools`, `POST /mcp/servers/{id}/invoke`; `GET /skills`, `GET /skills/catalog`, `POST /skills/install`, `POST /skills/{id}/sync`; `GET /ai/providers/meta`, `POST /ai/providers/{id}/default`, `POST /ai/providers/{id}/test`; `GET /knowledge/formats`, `POST /knowledge/upload`, `GET /knowledge/stats`; `GET /agents/meta/bindings`. Smoke coverage includes independent CRUD, delete-isolation, stale-id cleanup, bound chat, key masking, exclusive defaults, `effective_llm()` override, docx/xlsx/pdf/csv/md parsing and unsupported-format rejection.

@@ -1,6 +1,6 @@
 # AI Low-Code Platform
 
-> An AI-native, full-stack low-code platform: visual **form designer**, visual **DAG workflow orchestration**, a complete **REST API**, **MCP** (streamable HTTP) with **independently managed MCP servers and Skills**, multi-category **AI model services** (LLM/ASR/TTS/Embedding/Rerank/Vision), **multi-format knowledge upload** (Office/PDF/Markdown/…), knowledge-grounded **AI query & action agents** with declarative resource bindings, full **RBAC**, **CAS / OAuth2 / OIDC / WeCom / DingTalk SSO**, and role/user-based **Passkey + OTP MFA**.
+> An AI-native, full-stack low-code platform: a **China-localized visual form designer** (44 field types, statutory validators, formula sandbox, detail tables, conditional rules), visual **DAG workflow orchestration** with a **long-running human approval runtime** (countersign, parallel/join, delegation, task actions), a complete **REST API**, **MCP** (streamable HTTP) with **independently managed MCP servers and Skills**, multi-category **AI model services** (LLM/ASR/TTS/Embedding/Rerank/Vision), **multi-format knowledge upload** (Office/PDF/Markdown/…), knowledge-grounded **AI query & action agents** with declarative resource bindings, full **RBAC**, **CAS / OAuth2 / OIDC / WeCom / DingTalk SSO**, and role/user-based **Passkey + OTP MFA**. See [Domestic Form & Approval Spec](docs/form-flow-domestic.md).
 
 Frontend: **Vite + React + TypeScript + shadcn/ui design system** · Backend: **uv + python-dotenv + FastAPI + fastmcp + AgentScope** · **MIT licensed** · **i18n (en/zh, English by default)** · **theme (system / light / dark)**.
 
@@ -32,9 +32,9 @@ Frontend: **Vite + React + TypeScript + shadcn/ui design system** · Backend: **
 
 | Area | What is implemented |
 | --- | --- |
-| **Visual form designer** | 15 field types, click-to-add palette, drag-to-reorder, per-field property editor (label/key/required/placeholder/options/width/validation), live preview with real validation, draft/publish/archive, submission records |
-| **Visual workflow orchestration** | Drag-and-drop DAG canvas with bezier edges, 9 node types (start/end/form/condition/approval/AI/knowledge/HTTP/notification), connect mode, condition branches, node config panel, zoom, auto-layout, graph validation (cycle detection), execution engine, instance logs |
-| **REST API** | 97 OpenAPI paths (133 route decorators) under `/api/v1`, Pydantic request/response models, auto OpenAPI at `/docs`, consistent error codes, audit logging on every mutation |
+| **Visual form designer (China-ready)** | **44 field types in 5 groups** (身份证 / 统一社会信用代码 / 手机号 / 银行卡 / 金额大写 / 省市区 / 手写签名 / 明细表 / 组织架构 …), click-to-add grouped palette, drag-to-reorder, Basic/Rules/Advanced property tabs, `visible_when` / `required_when` rule editor, restricted-AST formula sandbox (19 functions incl. `CNY_UPPER` / `TABLE_SUM`), detail-table row formulas & summaries, node-level field permissions, form versions & restore, serial numbers, print view, CSV export, desktop/mobile preview, draft/publish/archive, submissions |
+| **Visual workflow orchestration & approval** | Drag-and-drop DAG canvas with bezier edges, **14 node types** (adds `cc` / `parallel` / `join` / `delay` / `subflow`), connect mode, condition groups, node config panel, zoom, auto-layout, cycle detection, synchronous dry-run engine **plus a long-running human approval runtime**: 9 approver rules (部门主管 / 逐级主管 …), 4 signing modes (或签 / 会签 / 比例 / 依次审批), parallel branches & join, CC, reject / return / transfer / add-sign / withdraw / urge, timeouts & delegation, task center, instance timeline, pinned graph snapshots & workflow versions |
+| **REST API** | 120 OpenAPI paths (157 route decorators) under `/api/v1`, Pydantic request/response models, auto OpenAPI at `/docs`, consistent error codes, audit logging on every mutation |
 | **MCP** | Real `fastmcp` streamable-HTTP server at `/mcp` (initialize / tools/list / tools/call / resources / prompts), 12 platform tools plus a `call_remote_tool` bridge, and a dependency-free built-in JSON-RPC fallback |
 | **MCP servers** | Independent `/mcp/servers` registry: CRUD for `http`/`sse`/`stdio` connections, auth config, probe / sync tool discovery, health & status, enable/disable and per-server tool invocation |
 | **Skills** | Independent `/skills` registry: installable catalog, install/enable/disable/uninstall/reinstall, editable skill files with disk mirror, optional `server_id` link to an MCP server, linked-server sync |
@@ -64,10 +64,10 @@ ai-lowcode-platform/
 │   │   ├── mcp_server.py       fastmcp tools + builtin JSON-RPC fallback
 │   │   ├── routers/            auth, rbac, forms, workflows, knowledge, agents, mcp,
 │   │   │                       mcp_servers, skills, ai_providers, audit, meta
-│   │   └── services/           workflow_engine, rag, llm, mcp_tools, mcp_servers,
-│   │                           model_providers, documents, mcp_journal, skill_catalog,
-│   │                           skill_files, sso
-│   └── tests/smoke.py          110 end-to-end API assertions
+│   │   └── services/           workflow_engine, flow_runtime, form_catalog, form_rules,
+│   │                           rag, llm, mcp_tools, mcp_servers, model_providers,
+│   │                           documents, mcp_journal, skill_catalog, skill_files, sso
+│   └── tests/smoke.py          157 end-to-end API assertions
 └── frontend/                   Vite + React + TS SPA
     └── src/
         ├── components/ui/      shadcn-style primitives, dialogs, toasts, table
@@ -129,8 +129,9 @@ The database is created and seeded automatically on first boot. CAS ships enable
 7. **Knowledge upload** → drag a `.docx` / `.xlsx` / `.pdf` / `.md` file into the upload dialog, then inspect its parse status and the immediate BM25 index.
 8. **Agent bindings** → create an agent and bind knowledge bases, skills, MCP servers and workflows from one searchable dialog; stale ids are cleaned automatically.
 9. **Authentication & locale** → enable an SSO provider, enforce OTP for a role, enroll a factor in **Settings**, then toggle **EN/中文** and the theme (system/light/dark).
+10. **Domestic form & approval** → open `expense_claim` to see the 44-field grouped palette, Rules tab, `TABLE_SUM` formula, RMB amount-in-words, detail table and **Versions / Print / CSV**; then open `expense_approval`, click **Start approval**, and use **Task center** to approve / reject / return / transfer / add signer through the countersign + parallel + join chain.
 
-Deep links are supported: `/#/forms?form=leave_request`, `/#/workflows?workflow=leave_approval`, `/#/agents?agent=general_copilot`.
+Deep links are supported: `/#/forms?form=leave_request`, `/#/forms?form=expense_claim`, `/#/workflows?workflow=leave_approval`, `/#/workflows?workflow=expense_approval`, `/#/agents?agent=general_copilot`.
 
 ---
 
@@ -141,6 +142,8 @@ Deep links are supported: `/#/forms?form=leave_request`, `/#/workflows?workflow=
 | `POST /api/v1/auth/login`, `/auth/mfa/verify`, `/auth/otp/*`, `/auth/passkey/*`, `/auth/sso/*` | Authentication, MFA, SSO |
 | `/api/v1/forms`, `/workflows`, `/knowledge`, `/agents`, `/mcp`, `/mcp/servers`, `/skills`, `/ai/providers`, `/rbac`, `/audit`, `/settings`, `/meta` | Full resource CRUD + actions |
 | `POST /api/v1/workflows/{id}/validate`, `/run` | DAG validation and execution |
+| `GET /forms/meta`, `POST /forms/{id}/evaluate`, `/validate`, `/versions`, `/render`, `/print/{sid}`, `/submissions/export` | 44-field catalog, live formula/permission evaluation, versions, print & CSV |
+| `POST /workflows/{id}/start`, `GET /workflows/tasks`, `/instances/{id}/tasks/{tid}/act`, `/timeline`, `/form-schema`, `/delegations` | Long-running approval: start, task center, human actions, node field permissions, delegation |
 | `POST /api/v1/knowledge/search`, `/knowledge/upload`, `GET /knowledge/formats` | RAG retrieval, multi-format upload, format catalog |
 | `POST /api/v1/agents/{id}/chat`, `GET /agents/meta/bindings` | ReAct agent chat and bindable resources |
 | `GET /api/v1/meta/bootstrap` | All UI catalogs (field types, node types, permissions, providers, runtime) in one call |
@@ -175,7 +178,7 @@ Frontend: `frontend/.env.example` (`VITE_API_BASE=/api/v1`, proxied to `:8000` b
 
 ## i18n & theme
 
-- **English is the default**; switch to 中文 in the header (persisted in `localStorage`). All UI strings live in `frontend/src/i18n/locales.ts` (651 leaf keys per locale, verified complete).
+- **English is the default**; switch to 中文 in the header (persisted in `localStorage`). All UI strings live in `frontend/src/i18n/locales.ts` (740 leaf keys per locale, verified complete).
 - **Theme defaults to `system`** and follows `prefers-color-scheme`; light/dark can be forced. Design tokens are CSS HSL variables in `frontend/src/index.css`, following the shadcn/ui convention.
 - Platform defaults (`default_locale`, `default_theme`, …) are also stored server-side via `/api/v1/settings`.
 
@@ -190,12 +193,13 @@ Full design and architecture documentation lives in [`docs/`](docs/README.md):
 | [System Architecture](docs/architecture.md) ([中文](docs/architecture.zh-CN.md)) | C4 context/container/component views, request pipeline, runtime sequences, deployment, quality attributes, traceability |
 | [AI System Design](docs/ai-design.md) ([中文](docs/ai-design.zh-CN.md)) | LLM runtime & degradation, ReAct orchestration, unified tool registry, RAG/BM25, MCP exposure, prompt spec, safety boundary, production upgrade path |
 | [Security Architecture](docs/security.md) | JWT/PBKDF2/TOTP/WebAuthn, 25 RBAC permissions, SSO, MFA policy, audit, threat model |
-| [Data Model](docs/data-model.md) | 21 tables, 10 indexes, JSON columns, ER diagram, seed data, lazy migrations |
-| [REST & MCP API Reference](docs/api-reference.md) | All 97 OpenAPI paths, MCP methods, 12 tool schemas, examples |
+| [Data Model](docs/data-model.md) | 26 tables, 17 indexes, JSON columns, ER diagram, seed data, lazy migrations |
+| [REST & MCP API Reference](docs/api-reference.md) | All 120 OpenAPI paths, MCP methods, 12 tool schemas, examples |
 | [MCP Servers, Skills & Call Journal](docs/mcp-skills.md) | Independent registries, skill lifecycle, editable files, invocation journal, sources and RBAC |
 | [Knowledge Upload](docs/knowledge-upload.md) | Supported formats, parsing pipeline, upload API and validation |
 | [AI Model Services](docs/ai-models.md) | Six model categories, provider CRUD, write-only keys, defaults and runtime resolution |
-| [ADR index](docs/adr/README.md) | 8 accepted architecture decision records + template |
+| [Domestic Form & Approval Spec](docs/form-flow-domestic.md) | 44 China-localized fields, statutory validation, formula sandbox, 14-node approval runtime, countersign / parallel / delegation, versions, print & CSV |
+| [ADR index](docs/adr/README.md) | 9 accepted architecture decision records + template |
 
 Real UI screenshots: [`docs/screenshots/`](docs/screenshots/).
 
@@ -213,7 +217,7 @@ pnpm typecheck && pnpm build
 pnpm check:i18n                         # en/zh key parity
 ```
 
-The smoke suite covers 116 assertions: auth/RBAC (including a 403 denial), form publish/validation/submit, DAG validation and both condition branches, RAG indexing, agent tool loops, MCP handshake/tools/call, SSO demo provisioning, MFA enrollment, audit logs, SPA hosting and API 404 handling, plus the MCP call journal (recording, statistics, CSV export, clearing) and the full skill lifecycle (install, file CRUD, path traversal rejection, enable/disable/uninstall/reinstall), plus the split MCP server / Skill registries, AI model providers, multi-format knowledge upload and agent resource bindings.
+The smoke suite covers 157 assertions: auth/RBAC (including a 403 denial), form publish/validation/submit, DAG validation and both condition branches, RAG indexing, agent tool loops, MCP handshake/tools/call, SSO demo provisioning, MFA enrollment, audit logs, SPA hosting and API 404 handling, plus the MCP call journal (recording, statistics, CSV export, clearing) and the full skill lifecycle (install, file CRUD, path traversal rejection, enable/disable/uninstall/reinstall), plus the split MCP server / Skill registries, AI model providers, multi-format knowledge upload and agent resource bindings. The final 41 assertions cover the domestic form/approval runtime: 44-field catalog, statutory validators, detail-table formulas, RMB amount-in-words, conditional display, mobile render, versions, CSV/print, 14 node types, 9 approver rules, 4 signing modes, and the full `expense_approval` chain (leader → parallel countersign → join → CC → approved) plus transfer, add-sign, return, urge, withdraw, timeout sweep and delegation.
 
 ---
 
@@ -224,7 +228,7 @@ This repository is a **complete, runnable reference implementation**. Before pro
 - **Passkeys** use demo-grade registration (challenge binding + credential storage). Install the `webauthn` extra to enable full attestation/assertion verification; WebAuthn requires HTTPS.
 - **SSO providers without credentials run in demo mode** and provision a synthetic user — configure real credentials and disable demo mode.
 - **LLM defaults to `mock`** so every feature works offline; set `LLM_PROVIDER=openai-compatible` (or `agentscope`) plus an API key for real models.
-- **Workflow approval/HTTP/notification nodes are simulated** by the demo engine (auto-approve, no outbound request) — plug in your task/notification services.
+- **The synchronous `/run` engine is still a dry-run simulator** (auto-approve, no outbound request) — real human approvals use `POST /workflows/{id}/start` and the task center. Remaining demo-grade parts: `subflow` / `delay` nodes, `signature` / `attachment` file storage, the compact GB/T 2260 region sample, and the SQLite single-node store (see [FFC-001 §7](docs/form-flow-domestic.md)).
 - Replace SQLite with PostgreSQL for multi-instance deployments, set a strong `SECRET_KEY`, enable HTTPS, and enforce MCP authentication for untrusted clients.
 
 ---

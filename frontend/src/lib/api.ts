@@ -62,3 +62,20 @@ export const del = <T = any>(p: string, o?: RequestOptions) => api<T>(p, { ...o,
 /** multipart/form-data upload — pass a FormData as body, no Content-Type override. */
 export const upload = <T = any>(p: string, form: FormData, o?: RequestOptions) =>
   api<T>(p, { ...o, method: 'POST', body: form, raw: true })
+/** Download a binary/text response (CSV export, etc.) with auth headers. */
+export async function download(path: string, filename: string): Promise<void> {
+  const token = getToken()
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!response.ok) throw new ApiError(response.status, `HTTP ${response.status}`)
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}

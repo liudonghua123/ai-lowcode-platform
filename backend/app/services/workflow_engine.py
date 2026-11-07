@@ -7,7 +7,8 @@ from .. import db
 from . import rag
 
 NODE_TYPES = ["start", "end", "form", "condition", "approval", "ai",
-              "http", "knowledge", "notification"]
+              "http", "knowledge", "notification", "cc", "parallel", "join",
+              "delay", "subflow"]
 
 
 def validate_graph(graph: dict) -> list[str]:
@@ -28,6 +29,13 @@ def validate_graph(graph: dict) -> list[str]:
     for n in nodes:
         if n.get("type") not in NODE_TYPES:
             errors.append(f"Unknown node type: {n.get('type')}")
+        if n.get("type") == "join" and (n.get("config") or {}).get("join_mode") not in \
+                (None, "all", "any"):
+            errors.append(f"Invalid join_mode on {n.get('id')}")
+        if n.get("type") == "approval":
+            mode = (n.get("config") or {}).get("sign_mode")
+            if mode not in (None, "any", "all", "ratio", "sequence"):
+                errors.append(f"Invalid sign_mode on {n.get('id')}")
     idset = set(ids)
     for e in edges:
         if e.get("source") not in idset or e.get("target") not in idset:
@@ -57,6 +65,10 @@ def validate_graph(graph: dict) -> list[str]:
 
 
 def evaluate_condition(config: dict, context: dict) -> bool:
+    if config.get("conditions"):
+        from . import form_rules
+        return form_rules.check_rule(
+            {"logic": config.get("logic") or "and", "conditions": config["conditions"]}, context)
     field = config.get("field") or ""
     operator = config.get("operator") or "gt"
     expected = config.get("value")
@@ -117,6 +129,17 @@ def _execute_node(node: dict, context: dict) -> dict:
     elif ntype == "notification":
         result["notification"] = {"channel": cfg.get("channel") or "in-app",
                                   "template": cfg.get("template") or "", "delivered": True}
+    elif ntype == "cc":
+        result["cc"] = {"assignees": cfg.get("assignees") or [], "notified": True}
+    elif ntype == "parallel":
+        result["parallel"] = {"branches": len(
+            [e for e in (cfg.get("edges") or [])]) or cfg.get("branch_count", 2)}
+    elif ntype == "join":
+        result["join"] = {"mode": cfg.get("join_mode") or "all"}
+    elif ntype == "delay":
+        result["delay"] = {"hours": cfg.get("delay_hours") or 0, "simulated": True}
+    elif ntype == "subflow":
+        result["subflow"] = {"workflow_code": cfg.get("workflow_code"), "simulated": True}
     elif ntype == "condition":
         result["condition_result"] = evaluate_condition(cfg, context)
     return result
@@ -161,6 +184,11 @@ def run(graph: dict, context: dict | None = None, actor: str = "system") -> dict
             entry["branch"] = branch
             next_edge = next((e for e in outgoing if str(e.get("condition", "")).lower() == branch),
                              next((e for e in outgoing if not e.get("condition")), None))
+        elif node.get("type") == "parallel":
+            # The synchronous dry-run records every branch but follows the first
+            # one on the main line; real parallel execution lives in flow_runtime.
+            entry["parallel_branches"] = [e.get("target") for e in outgoing]
+            next_edge = outgoing[0]
         elif outgoing:
             next_edge = outgoing[0]
         logs.append(entry)

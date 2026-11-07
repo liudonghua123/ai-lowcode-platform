@@ -7,9 +7,9 @@
 | Version | 1.0 |
 | Applies to | `ai-lowcode-platform` v0.1.0 |
 | Source of truth | `backend/app/db.py::SCHEMA` |
-| Related | [System Architecture](architecture.md) · [Security Architecture](security.md) · [API & MCP Reference](api-reference.md) · [ADR-0004](adr/0004-sqlite-and-local-bm25.md) |
+| Related | [System Architecture](architecture.md) · [Security Architecture](security.md) · [API & MCP Reference](api-reference.md) · [Domestic Form & Approval](form-flow-domestic.md) · [ADR-0004](adr/0004-sqlite-and-local-bm25.md) · [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md) |
 
-> 中文摘要：平台使用单文件 SQLite（WAL 模式），共 **21 张表、10 个索引**，复杂结构统一以 JSON 文本列存储并由 `insert/update/loads` 透明序列化；连接采用线程局部对象 + 可重入写锁，`init_db()` 内置幂等的 `ALTER TABLE` 惰性迁移。首次启动自动灌入确定性演示数据。详见 [系统架构设计](architecture.zh-CN.md)。
+> 中文摘要：平台使用单文件 SQLite（WAL 模式），共 **26 张表、17 个索引**，复杂结构统一以 JSON 文本列存储并由 `insert/update/loads` 透明序列化；连接采用线程局部对象 + 可重入写锁，`init_db()` 内置幂等的 `ALTER TABLE` 惰性迁移。国内表单/审批增强新增 `form_versions`、`workflow_versions`、`flow_tasks`、`flow_delegations`、`org_units` 五张表，并扩展 `forms` / `form_submissions` / `workflows` / `workflow_instances` 的列，详见 [国内表单与审批规范](form-flow-domestic.md)。首次启动自动灌入确定性演示数据。详见 [系统架构设计](architecture.zh-CN.md)。
 
 ## 1. Storage strategy
 
@@ -45,11 +45,16 @@ erDiagram
     mcp_servers ||--o{ mcp_skills : "server_id (nullable)"
     auth_providers ||--o{ sso_states : "provider"
     users ||--o{ mfa_challenges : "user_id"
+    forms ||--o{ form_versions : "form_id"
+    workflows ||--o{ workflow_versions : "workflow_id"
+    workflow_instances ||--o{ flow_tasks : "instance_id"
+    org_units ||--o{ org_units : "parent_code"
+    workflows ||--o{ forms : "form_code (nullable link)"
 ```
 
 > JSON-array columns represent logical relationships; SQLite foreign keys are declared where a scalar FK column exists (`form_id`, `workflow_id`, `collection_id`).
 
-## 3. Tables (21)
+## 3. Tables (26)
 
 ### 3.1 Identity & access (6)
 
@@ -62,19 +67,24 @@ erDiagram
 | `sso_states` | `state` (PK), `provider`, `redirect_uri`, `nonce`, `created_at` | CSRF/nonce state for SSO handshakes |
 | `mfa_challenges` | `id`, `user_id`, `kind`, `challenge`, `payload` **JSON**, `expires_at`, `consumed`, `created_at` | One-time WebAuthn/MFA challenges |
 
-### 3.2 Forms (2)
+### 3.2 Forms & versions (3)
 
 | Table | Key columns | Notes |
 | --- | --- | --- |
-| `forms` | `id`, `code` (unique), `name`, `description`, `status` (`draft`/`published`/`archived`), `schema` **JSON**, `layout` **JSON**, `version`, `created_by`, timestamps | Designer field definitions live in `schema` |
-| `form_submissions` | `id`, `form_id`, `data` **JSON**, `status`, `submitted_by`, `created_at` | Indexed by `form_id` |
+| `forms` | `id`, `code` (unique), `name`, `description`, `status` (`draft`/`published`/`archived`), `schema` **JSON**, `layout` **JSON**, `version`, `print_template` **JSON**, `settings` **JSON**, `created_by`, timestamps | Designer field definitions live in `schema`; `settings` holds serial/region/print config |
+| `form_submissions` | `id`, `form_id`, `data` **JSON**, `status`, `submitted_by`, `created_at`, `form_version`, `serial_no`, `flow_instance_id`, `computed` **JSON**, `updated_at` | `computed` caches formulas, RMB-in-words, identity parsing and detail summaries; indexed by `form_id` and `(form_id, serial_no)` |
+| `form_versions` | `id`, `form_id`, `version`, `schema` **JSON**, `layout` **JSON**, `print_template` **JSON**, `settings` **JSON**, `note`, `created_by`, `created_at` | Immutable definition snapshots, auto-written on create/update/publish; `POST /forms/{id}/versions` restores one |
 
-### 3.3 Workflows (2)
+### 3.3 Workflows, approval tasks & organization (6)
 
 | Table | Key columns | Notes |
 | --- | --- | --- |
-| `workflows` | `id`, `code` (unique), `name`, `description`, `status`, `graph` **JSON** (`{nodes, edges}`), `version`, `created_by`, timestamps | DAG definition |
-| `workflow_instances` | `id`, `workflow_id`, `status`, `context` **JSON**, `logs` **JSON**, `started_by`, `started_at`, `finished_at` | Indexed by `workflow_id` |
+| `workflows` | `id`, `code` (unique), `name`, `description`, `status`, `graph` **JSON** (`{nodes, edges}`), `version`, `form_code` (nullable link), `created_by`, timestamps | DAG definition; `form_code` binds a form for approval instances |
+| `workflow_instances` | `id`, `workflow_id`, `status`, `context` **JSON**, `logs` **JSON**, `started_by`, `started_at`, `finished_at`, `graph` **JSON** (pinned snapshot), `form_data` **JSON**, `form_code`, `current_nodes` **JSON**, `variables` **JSON**, `workflow_version` | Long-running approval state; indexed by `workflow_id` |
+| `workflow_versions` | `id`, `workflow_id`, `version`, `graph` **JSON**, `form_code`, `note`, `created_by`, `created_at` | Graph snapshots pinned by running instances |
+| `flow_tasks` | `id`, `instance_id`, `node_id`, `node_name`, `node_type`, `assignee`, `seq`, `status` (`pending`/`approved`/`rejected`/`skipped`/…), `decision`, `comment`, `signature`, `due_at`, `acted_at`, `created_at`, `delegated_from`, `round` | One row per assignee per node activation; `round` supports re-review after a return |
+| `flow_delegations` | `id`, `principal`, `agent`, `enabled`, `start_at`, `end_at`, `reason`, `created_by`, `created_at` | Principal → agent delegation applied when tasks are created |
+| `org_units` | `id`, `code` (unique), `name`, `parent_code`, `level`, `leader`, `sort_order` | Minimal department hierarchy for `initiator_leader` / `leader_chain` approver rules |
 
 ### 3.4 Knowledge base (2)
 
@@ -102,7 +112,7 @@ erDiagram
 | `audit_logs` | `id`, `actor`, `action`, `resource`, `detail` **JSON**, `ip`, `level`, `created_at` | Indexed by `created_at DESC` |
 | `settings` | `key` (PK), `value` **JSON**, `updated_at` | Runtime overrides (MFA policy, i18n/theme defaults) |
 
-## 4. Indexes (10)
+## 4. Indexes (17)
 
 | Index | Column | Purpose |
 | --- | --- | --- |
@@ -116,6 +126,13 @@ erDiagram
 | `idx_ai_providers_category` | `ai_providers(category, is_default)` | Default provider lookup per category |
 | `idx_mcp_servers_enabled` | `mcp_servers(enabled)` | Enabled-server tool discovery |
 | `idx_kbdocs_file_type` | `kb_documents(file_type)` | Upload format aggregation |
+| `idx_form_versions_form` | `form_versions(form_id, version DESC)` | Version listing / restore |
+| `idx_wf_versions_wf` | `workflow_versions(workflow_id, version DESC)` | Graph version listing |
+| `idx_flow_tasks_instance` | `flow_tasks(instance_id, round)` | Instance task + timeline queries |
+| `idx_flow_tasks_assignee` | `flow_tasks(assignee, status)` | Personal task center |
+| `idx_flow_delegations_principal` | `flow_delegations(principal, enabled)` | Active delegation lookup at task creation |
+| `idx_org_units_parent` | `org_units(parent_code)` | Leader-chain traversal |
+| `idx_submissions_serial` | `form_submissions(form_id, serial_no)` | Serial-number uniqueness / lookup |
 
 ## 5. Data access API
 
@@ -136,14 +153,14 @@ erDiagram
 
 `seed_if_empty()` runs once on first boot and creates: 25 permissions, 4 roles, 4 users (`admin`, `alice`, `bob`, `carol`), 5 SSO providers (CAS enabled in demo mode), sample forms and submissions, workflows and instances, knowledge collections/documents, agents, conversations, settings and audit logs. Admin is created with `mfa_required=0` and MFA defaults off, so the demo is immediately usable.
 
-`ensure_registries()` is idempotent and runs on **every** startup (also from `seed_if_empty()`), provisioning three independent registries without touching user data: 3 MCP servers (`platform-builtin`, `thirdparty-http`, `thirdparty-stdio`), 5 catalog Skills (linked to those servers via `server_id`) and 5 default AI model providers (`llm`/`asr`/`tts`/`embedding`/`rerank`). This is also the in-place upgrade path for databases created before the MCP/Skills split.
+`ensure_registries()` is idempotent and runs on **every** startup (also from `seed_if_empty()`), provisioning three independent registries without touching user data: 3 MCP servers (`platform-builtin`, `thirdparty-http`, `thirdparty-stdio`), 5 catalog Skills (linked to those servers via `server_id`) and 6 default AI model providers (`llm`/`asr`/`tts`/`embedding`/`rerank`/`vision`). `ensure_domestic_examples()` additionally provisions the `expense_claim` form, the `expense_approval` workflow and 6 `org_units` with parent links and leaders. Together these are the in-place upgrade path for databases created before the MCP/Skills split and the domestic form/approval runtime.
 
 ## 7. Migration notes
 
 - Schema is created idempotently with `CREATE TABLE IF NOT EXISTS`; full table creation is handled by `init_db()`.
 - `init_db()` executes `SCHEMA` (tables), then calls `_migrate()`, then executes `INDEX_SCHEMA`. Indexes are created **after** the migration because some reference columns added by `ALTER TABLE` on existing databases.
-- `_migrate()` is driven by the `MIGRATIONS` dict; it reads `PRAGMA table_info(<table>)` and issues `ALTER TABLE ... ADD COLUMN` for any missing column. Current migrations: `mcp_skills` (lifecycle fields + `server_id`), `kb_documents` (upload metadata), `agents` (`server_ids`), `mcp_call_logs` (`target`).
-- v0.2.0 added the skill lifecycle / journal tables. v0.3.0 adds `mcp_servers` + `ai_providers`, splits MCP servers from Skills, and adds multi-format upload metadata. `ensure_registries()` backfills the new registries on existing databases.
+- `_migrate()` is driven by the `MIGRATIONS` dict; it reads `PRAGMA table_info(<table>)` and issues `ALTER TABLE ... ADD COLUMN` for any missing column. Current migrations: `mcp_skills` (lifecycle fields + `server_id`), `kb_documents` (upload metadata), `agents` (`server_ids`), `mcp_call_logs` (`target`), `forms` (`print_template`, `settings`), `form_submissions` (`form_version`, `serial_no`, `flow_instance_id`, `computed`, `updated_at`), `workflows` (`form_code`) and `workflow_instances` (`graph`, `form_data`, `form_code`, `current_nodes`, `variables`, `workflow_version`).
+- v0.2.0 added the skill lifecycle / journal tables. v0.3.0 adds `mcp_servers` + `ai_providers`, splits MCP servers from Skills, and adds multi-format upload metadata. v0.4.0 (FFC-001) adds the five form/approval tables, their 7 indexes and the extended columns above. `ensure_registries()` / `ensure_domestic_examples()` backfill the new registries and demo data on existing databases.
 - `skill_files.bootstrap()` runs at startup to materialize default files for installed skills that have none; `mcp_journal.ensure_demo()` seeds illustrative journal rows when the table is empty.
 - For production, replace SQLite with Postgres and map JSON columns to `JSONB`; the data access helpers are the single integration seam.
 - `backend/data/*.db*` is git-ignored; only `.gitkeep` is committed.

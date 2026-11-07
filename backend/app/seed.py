@@ -281,6 +281,7 @@ def ensure_registries(now: str | None = None) -> dict:
     boot = model_providers.bootstrap_from_env(now)
     created["providers"] += boot["created"]
     created["env_refreshed"] = boot["refreshed"]
+    created["domestic"] = ensure_domestic_examples(now)
     return created
 
 
@@ -422,3 +423,141 @@ def seed_if_empty() -> bool:
                                  "detail": detail, "ip": "127.0.0.1", "level": "info",
                                  "created_at": now})
     return True
+
+
+# --------------------------------------------------------------------------- #
+# Domestic form / approval examples (idempotently provisioned on every boot)
+# --------------------------------------------------------------------------- #
+ORG_UNITS = [
+    ("HQ", "集团总部 / Headquarters", None, 1, "admin", 0),
+    ("IT", "信息技术部 / IT", "HQ", 2, "admin", 1),
+    ("Engineering", "技术研发部 / Engineering", "HQ", 2, "alice", 2),
+    ("Sales", "销售部 / Sales", "HQ", 2, "bob", 3),
+    ("HR", "人力资源部 / HR", "HQ", 2, "carol", 4),
+    ("Finance", "财务部 / Finance", "HQ", 2, "admin", 5),
+]
+
+EXPENSE_FORM = {
+    "code": "expense_claim", "name": "Expense Claim / 费用报销单", "status": "published",
+    "description": "Domestic expense claim: serial number, detail table, RMB in words, "
+                   "statutory identifiers, conditional display and conditional-required.",
+    "schema": [
+        {"id": "x1", "key": "serial_no", "type": "serial", "label": "单据编号 / No.",
+         "width": 50, "serial": {"prefix": "BX", "date": True, "digits": 4}},
+        {"id": "x2", "key": "applicant", "type": "user", "label": "报销人 / Applicant",
+         "required": True, "width": 50},
+        {"id": "x3", "key": "department", "type": "department", "label": "所属部门 / Dept",
+         "required": True, "width": 50},
+        {"id": "x4", "key": "mobile", "type": "mobile", "label": "手机号 / Mobile",
+         "required": True, "width": 50},
+        {"id": "x5", "key": "claim_type", "type": "select", "label": "报销类型 / Type",
+         "required": True, "width": 50,
+         "options": ["差旅", "办公采购", "业务招待", "其他"]},
+        {"id": "x6", "key": "travel_region", "type": "region", "label": "出差地点 / Region",
+         "width": 100, "visible_when": {"logic": "and", "conditions": [
+             {"field": "claim_type", "operator": "eq", "value": "差旅"}]}},
+        {"id": "x7", "key": "bank_account", "type": "bankcard", "label": "收款账号 / Bank card",
+         "width": 50, "visible_when": {"logic": "and", "conditions": [
+             {"field": "claim_type", "operator": "eq", "value": "差旅"}]}},
+        {"id": "x8", "key": "supplier_uscc", "type": "uscc",
+         "label": "供应商统一社会信用代码 / USCC", "width": 100,
+         "visible_when": {"logic": "and", "conditions": [
+             {"field": "claim_type", "operator": "eq", "value": "业务招待"}]}},
+        {"id": "x9", "key": "idcard", "type": "idcard", "label": "身份证号 / ID card",
+         "width": 50},
+        {"id": "x10", "key": "items", "type": "table", "label": "费用明细 / Details",
+         "width": 100, "columns": [
+             {"key": "item", "label": "费用项目", "type": "text"},
+             {"key": "qty", "label": "数量", "type": "number"},
+             {"key": "price", "label": "单价", "type": "number"},
+             {"key": "subtotal", "label": "小计", "type": "formula", "formula": "qty * price"},
+         ], "summary": [{"key": "total", "label": "明细合计", "column": "subtotal", "op": "sum"}]},
+        {"id": "x11", "key": "total_amount", "type": "amount", "label": "报销总额 / Total (CNY)",
+         "required": True, "width": 50, "show_upper": True,
+         "formula": "TABLE_SUM(\"items\", \"subtotal\")",
+         "validation": {"min": 0, "precision": 2}},
+        {"id": "x12", "key": "remark", "type": "textarea", "label": "备注 / Remark",
+         "width": 100, "required_when": {"logic": "and", "conditions": [
+             {"field": "total_amount", "operator": "gt", "value": 5000}]}},
+        {"id": "x13", "key": "invoice", "type": "image", "label": "发票照片 / Invoice",
+         "width": 50},
+        {"id": "x14", "key": "signature", "type": "signature", "label": "本人签名 / Signature",
+         "width": 50},
+        {"id": "x15", "key": "notice", "type": "description", "label": "填写说明",
+         "width": 100, "description": "单笔超过 5000 元需填写备注并走财务会签。"},
+    ],
+    "layout": {"columns": 2, "labelWidth": 150, "size": "default",
+               "mobile": {"columns": 1, "hidden": ["supplier_uscc"]}},
+    "print_template": {"title": "费用报销单", "show_serial": True,
+                       "show_upper": True, "paper": "A4"},
+    "settings": {"allow_draft": True, "unique_per_day": True},
+}
+
+EXPENSE_GRAPH = {
+    "nodes": [
+        {"id": "n1", "type": "start", "name": "发起报销 / Start", "x": 60, "y": 240,
+         "config": {"form_code": "expense_claim"}},
+        {"id": "n2", "type": "approval", "name": "部门主管 / Dept. leader", "x": 250, "y": 240,
+         "config": {"approver_rule": "initiator_leader", "leader_level": 1,
+                    "sign_mode": "any", "exclude_initiator": True, "empty_policy": "admin",
+                    "timeout_hours": 24, "timeout_action": "remind",
+                    "comment_required": True,
+                    "field_permissions": {"serial_no": "readonly", "applicant": "readonly",
+                                          "total_amount": "readonly", "items": "readonly"}}},
+        {"id": "n3", "type": "condition", "name": "金额>5000 或 差旅 / Condition", "x": 470, "y": 240,
+         "config": {"logic": "or", "conditions": [
+             {"field": "total_amount", "operator": "gt", "value": 5000},
+             {"field": "claim_type", "operator": "eq", "value": "差旅"}]}},
+        {"id": "n4", "type": "parallel", "name": "并行会签 / Parallel", "x": 690, "y": 240,
+         "config": {}},
+        {"id": "n5", "type": "approval", "name": "财务会签 / Finance countersign", "x": 900, "y": 120,
+         "config": {"approver_rule": "users", "assignees": ["admin", "alice"],
+                    "sign_mode": "all", "allow_return": True, "reject_policy": "return"}},
+        {"id": "n6", "type": "approval", "name": "总经理 / GM", "x": 900, "y": 360,
+         "config": {"approver_rule": "users", "assignees": ["bob"], "sign_mode": "any"}},
+        {"id": "n8", "type": "join", "name": "汇聚 / Join", "x": 1110, "y": 240,
+         "config": {"join_mode": "all"}},
+        {"id": "n7", "type": "cc", "name": "抄送人事 / CC HR", "x": 1300, "y": 240,
+         "config": {"approver_rule": "users", "assignees": ["carol"]}},
+        {"id": "n9", "type": "end", "name": "结束 / End", "x": 1490, "y": 240, "config": {}},
+    ],
+    "edges": [
+        {"id": "e1", "source": "n1", "target": "n2"},
+        {"id": "e2", "source": "n2", "target": "n3"},
+        {"id": "e3", "source": "n3", "target": "n4", "label": "是 / Yes", "condition": "true"},
+        {"id": "e4", "source": "n3", "target": "n7", "label": "否 / No", "condition": "false"},
+        {"id": "e5", "source": "n4", "target": "n5"},
+        {"id": "e6", "source": "n4", "target": "n6"},
+        {"id": "e7", "source": "n5", "target": "n8"},
+        {"id": "e8", "source": "n6", "target": "n8"},
+        {"id": "e9", "source": "n8", "target": "n7"},
+        {"id": "e10", "source": "n7", "target": "n9"},
+    ],
+}
+
+
+def ensure_domestic_examples(now: str | None = None) -> dict:
+    """Provision org units and the domestic example form/workflow idempotently."""
+    now = now or db.now()
+    created = {"org_units": 0, "forms": 0, "workflows": 0}
+    for code, name, parent, level, leader, order in ORG_UNITS:
+        if db.q1("SELECT id FROM org_units WHERE code=?", (code,)):
+            continue
+        db.insert("org_units", {"code": code, "name": name, "parent_code": parent,
+                                "level": level, "leader": leader, "sort": order,
+                                "created_at": now})
+        created["org_units"] += 1
+    if not db.q1("SELECT id FROM forms WHERE code=?", (EXPENSE_FORM["code"],)):
+        db.insert("forms", {**EXPENSE_FORM, "version": 1, "created_by": "admin",
+                            "created_at": now, "updated_at": now})
+        created["forms"] += 1
+    if not db.q1("SELECT id FROM workflows WHERE code=?", ("expense_approval",)):
+        db.insert("workflows", {"code": "expense_approval",
+                                "name": "Expense Approval / 费用报销审批",
+                                "description": "Leader approval, amount/type condition group, "
+                                               "parallel countersign + GM, join, CC and timeout.",
+                                "status": "published", "form_code": EXPENSE_FORM["code"],
+                                "graph": EXPENSE_GRAPH, "version": 1, "created_by": "admin",
+                                "created_at": now, "updated_at": now})
+        created["workflows"] += 1
+    return created

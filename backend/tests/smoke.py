@@ -404,6 +404,130 @@ def main() -> int:
         check("audit logs", c.get("/api/v1/audit/logs", headers=h).json()["total"] > 10)
         check("platform settings", c.get("/api/v1/settings", headers=h).status_code == 200)
 
+        print("\n== Domestic form features (CN scenarios) ==")
+        fmeta = c.get("/api/v1/forms/meta", headers=h).json()
+        check("44 form field types in 5 groups", fmeta["field_count"] == 44
+              and len(fmeta["groups"]) == 5)
+        check("validators include statutory CN rules", {"idcard", "mobile", "uscc", "bankcard"}
+              <= {v["code"] for v in fmeta["validators"]})
+        check("formula functions include CNY_UPPER + TABLE_SUM", {"CNY_UPPER", "TABLE_SUM"}
+              <= {f["code"] for f in fmeta["functions"]})
+        dcode = f"cn_form_{suffix}"
+        df = c.post("/api/v1/forms", headers=h, json={
+            "code": dcode, "name": "Domestic form", "status": "draft",
+            "schema": [
+                {"id": "d1", "key": "serial_no", "type": "serial", "label": "No.",
+                 "serial": {"prefix": "CN", "date": True, "digits": 4}},
+                {"id": "d2", "key": "mobile", "type": "mobile", "label": "Mobile", "required": True},
+                {"id": "d3", "key": "idcard", "type": "idcard", "label": "ID card"},
+                {"id": "d4", "key": "amount", "type": "amount", "label": "Amount",
+                 "required": True, "show_upper": True},
+                {"id": "d5", "key": "secret", "type": "text", "label": "Extra",
+                 "visible_when": {"logic": "and", "conditions": [
+                     {"field": "amount", "operator": "gt", "value": 1000}]}},
+                {"id": "d6", "key": "items", "type": "table", "label": "Details",
+                 "columns": [{"key": "qty", "label": "Qty", "type": "number"},
+                             {"key": "price", "label": "Price", "type": "number"},
+                             {"key": "sub", "label": "Sub", "type": "formula",
+                              "formula": "qty * price"}],
+                 "summary": [{"key": "total", "label": "Total", "column": "sub", "op": "sum"}]},
+                {"id": "d7", "key": "computed_total", "type": "formula", "label": "Formula",
+                 "formula": "TABLE_SUM(\"items\", \"sub\")"},
+            ], "layout": {"columns": 2}}).json()
+        dfid = df["id"]
+        check("domestic form created", df.get("version") == 1)
+        check("form version snapshot", c.get(
+            f"/api/v1/forms/{dfid}/versions", headers=h).json()["total"] >= 1)
+        dev = c.post(f"/api/v1/forms/{dfid}/evaluate", headers=h, json={"data": {
+            "mobile": "13800138000", "idcard": "11010519491231002X", "amount": 1234.56,
+            "items": [{"qty": 2, "price": 10}, {"qty": 3, "price": 100}]}}).json()
+        check("detail table row formula + summary", dev["data"]["items"][1]["sub"] == 300
+              and dev["data"]["items_total"] == 320)
+        check("TABLE_SUM formula", dev["data"]["computed_total"] == 320)
+        check("RMB amount in words", dev["computed"]["amount_upper"]
+              == "壹仟贰佰叁拾肆元伍角陆分")
+        check("ID card parsed (birthday/gender/age)", dev["computed"]["idcard_info"]["gender"] == "女")
+        check("conditional display hides/shows fields", "secret" in dev["visible"])
+        bad = c.post(f"/api/v1/forms/{dfid}/evaluate", headers=h,
+                     json={"data": {"mobile": "123", "amount": 10}}).json()
+        check("invalid CN mobile rejected", any(e["rule"] == "mobile" for e in bad["errors"]))
+        check("form publishes", c.post(f"/api/v1/forms/{dfid}/publish", headers=h).status_code == 200)
+        dsub = c.post(f"/api/v1/forms/{dfid}/submissions", headers=h, json={"data": {
+            "mobile": "13800138000", "amount": 1234.56,
+            "items": [{"qty": 2, "price": 10}, {"qty": 3, "price": 100}]}})
+        check("submission with serial number", dsub.status_code == 201
+              and bool(dsub.json()["serial_no"]))
+        check("submission stores computed values", bool(dsub.json()["computed"]))
+        check("CSV export", c.get(
+            f"/api/v1/forms/{dfid}/submissions/export", headers=h).status_code == 200)
+        check("print view includes RMB upper", any(
+            f["upper"] for f in c.get(
+                f"/api/v1/forms/{dfid}/print/{dsub.json()['submission_id']}",
+                headers=h).json()["fields"]))
+        check("mobile render is single column", c.get(
+            f"/api/v1/forms/{dfid}/render?platform=mobile", headers=h).json()["columns"] == 1)
+        check("version restore", c.post(f"/api/v1/forms/{dfid}/versions", headers=h,
+              json={"version": 1}).status_code == 201)
+
+        print("\n== Domestic approval runtime ==")
+        wmeta = c.get("/api/v1/workflows/meta", headers=h).json()
+        check("14 node types incl. parallel/join/cc", len(wmeta["node_types"]) == 14)
+        check("9 approver rules + 4 sign modes", len(wmeta["approver_rules"]) == 9
+              and len(wmeta["sign_modes"]) == 4)
+        check("org units seeded", c.get("/api/v1/meta/health").json()["form_flow"]["org_units"] >= 5)
+        ewf = next(w for w in c.get("/api/v1/workflows", headers=h).json()["workflows"]
+                   if w["code"] == "expense_approval")
+        started = c.post(f"/api/v1/workflows/{ewf['id']}/start", headers=h, json={
+            "form_data": {"mobile": "13800138000", "claim_type": "差旅", "applicant": "admin",
+                          "department": "IT", "remark": "客户拜访",
+                          "items": [{"qty": 2, "price": 3000}]},
+            "create_submission": True})
+        check("approval instance started", started.status_code == 201, started.text[:120])
+        inst = started.json()
+        iid = inst["id"]
+        check("leader-chain resolver produced a task", len(inst["pending"]) == 1)
+        check("form submission linked to instance", inst.get("submission_id") is not None)
+        fsch = c.get(f"/api/v1/workflows/instances/{iid}/form-schema", headers=h).json()
+        check("per-node field permissions (readonly)", fsch["permissions"].get("total_amount") == "readonly")
+        first = c.post(f"/api/v1/workflows/instances/{iid}/tasks/{inst['pending'][0]['id']}/act",
+                       headers=h, json={"action": "approve", "comment": "ok"})
+        check("leader approves", first.status_code == 200)
+        check("parallel branch opened 3 tasks", len(first.json()["pending"]) >= 3)
+        for task in list(first.json()["pending"]):
+            r = c.post(f"/api/v1/workflows/instances/{iid}/tasks/{task['id']}/act",
+                       headers=h, json={"action": "approve", "comment": "ok"})
+            check(f"countersign task {task['assignee']} approved", r.status_code == 200)
+        done = c.get(f"/api/v1/workflows/instances/{iid}", headers=h).json()
+        check("join + cc -> instance approved", done["status"] == "approved")
+        check("timeline records all steps", len(done["logs"]) >= 8)
+        check("task center", c.get("/api/v1/workflows/tasks?all_users=true", headers=h).status_code == 200)
+        check("instance timeline endpoint", c.get(
+            f"/api/v1/workflows/instances/{iid}/timeline", headers=h).status_code == 200)
+        s2 = c.post(f"/api/v1/workflows/{ewf['id']}/start", headers=h, json={
+            "form_data": {"mobile": "13800138000", "claim_type": "办公采购",
+                          "applicant": "admin", "department": "IT"},
+            "create_submission": False}).json()
+        i2, t2 = s2["id"], s2["pending"][0]
+        tr = c.post(f"/api/v1/workflows/instances/{i2}/tasks/{t2['id']}/act", headers=h,
+                    json={"action": "transfer", "assignee": "alice"})
+        check("transfer task", tr.status_code == 200
+              and any(t["assignee"] == "alice" for t in tr.json()["pending"]))
+        t3 = next(t for t in tr.json()["pending"] if t["assignee"] == "alice")
+        check("add-sign", c.post(f"/api/v1/workflows/instances/{i2}/tasks/{t3['id']}/act",
+              headers=h, json={"action": "addsign_after", "assignee": "bob"}).status_code == 200)
+        check("return to initiator", c.post(
+            f"/api/v1/workflows/instances/{i2}/tasks/{t3['id']}/act", headers=h,
+            json={"action": "return", "comment": "补充材料"}).status_code == 200)
+        check("urge", c.post(f"/api/v1/workflows/instances/{i2}/urge", headers=h, json={}).status_code == 200)
+        check("withdraw", c.post(f"/api/v1/workflows/instances/{i2}/withdraw", headers=h,
+              json={}).status_code == 200)
+        check("timeout sweep", c.post("/api/v1/workflows/instances/sweep-timeouts",
+              headers=h).status_code == 200)
+        check("delegation create + list", c.post("/api/v1/workflows/delegations", headers=h,
+              json={"principal": "bob", "agent": "carol"}).status_code == 201
+              and c.get("/api/v1/workflows/delegations", headers=h).json()["total"] >= 1)
+        c.delete(f"/api/v1/forms/{dfid}", headers=h)
+
         print("\n== Cleanup ==")
         check("delete smoke workflow", c.delete(f"/api/v1/workflows/{wid}", headers=h).status_code == 200)
         check("delete smoke form", c.delete(f"/api/v1/forms/{fid}", headers=h).status_code == 200)

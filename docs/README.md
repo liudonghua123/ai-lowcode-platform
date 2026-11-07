@@ -11,12 +11,13 @@ This directory contains the platform's **standard design and architecture docume
 | `ARC-001` | [architecture.md](architecture.md) · [中文](architecture.zh-CN.md) | EN / 中文 | C4 context–container–component views, request pipeline, runtime sequences, deployment, quality attributes, traceability |
 | `AI-001` | [ai-design.md](ai-design.md) · [中文](ai-design.zh-CN.md) | EN / 中文 | **AI system design**: LLM runtime, ReAct orchestration, unified tool registry, RAG/BM25, MCP exposure, prompt spec, safety boundary, upgrade path |
 | `SEC-001` | [security.md](security.md) | EN (中文摘要) | Identity/JWT, PBKDF2, TOTP, WebAuthn, MFA policy, 25 RBAC permissions, SSO, audit, threat model, production checklist |
-| `DAT-001` | [data-model.md](data-model.md) | EN (中文摘要) | 21 tables, 10 indexes, JSON columns, ER diagram, data-access helpers, seed data, migration notes |
-| `API-001` | [api-reference.md](api-reference.md) | EN (中文摘要) | REST conventions, all **97 OpenAPI paths**, MCP methods, 12 tool schemas, examples |
+| `DAT-001` | [data-model.md](data-model.md) | EN (中文摘要) | 26 tables, 17 indexes, JSON columns, ER diagram, data-access helpers, seed data, migration notes |
+| `API-001` | [api-reference.md](api-reference.md) | EN (中文摘要) | REST conventions, all **120 OpenAPI paths**, MCP methods, 12 tool schemas, examples |
 | `MCP-001` | [mcp-skills.md](mcp-skills.md) | EN (中文摘要) | Independent MCP server and Skill registries, skill lifecycle, editable files, call journal, sources and RBAC |
 | `KNB-001` | [knowledge-upload.md](knowledge-upload.md) | EN (中文摘要) | Multi-format knowledge upload, parsing pipeline, format catalog, API and validation |
 | `AIM-001` | [ai-models.md](ai-models.md) | EN (中文摘要) | Six AI model categories, provider CRUD, write-only keys, defaults and runtime resolution |
-| `ADR-*` | [adr/README.md](adr/README.md) | EN | 8 accepted architecture decision records + ADR template and conventions |
+| `FFC-001` | [form-flow-domestic.md](form-flow-domestic.md) | EN (中文摘要) | **Domestic form & approval spec**: 44 China-localized fields, statutory validation, AST formula sandbox, detail tables, conditional rules, node field permissions, 14-node human approval runtime, countersign / parallel / delegation, versions, print & CSV, `expense_claim` example |
+| `ADR-*` | [adr/README.md](adr/README.md) | EN | 9 accepted architecture decision records + ADR template and conventions |
 | — | [README.md](../README.md) · [中文](../README.zh-CN.md) | EN / 中文 | Project overview, quick start, demo accounts, screenshots |
 | — | [backend/README.md](../backend/README.md) · [中文](../backend/README.zh-CN.md) | EN / 中文 | Backend runbook, endpoints, security, configuration |
 | — | [frontend/README.md](../frontend/README.md) · [中文](../frontend/README.zh-CN.md) | EN / 中文 | Frontend pages, layout, design system, i18n/theme, data flow |
@@ -29,6 +30,7 @@ This directory contains the platform's **standard design and architecture docume
 | AI engineer | `AI-001` → `ADR-0002/0003/0004/0005` → `API-001` → `services/llm.py`, `mcp_tools.py`, `rag.py` |
 | Backend engineer | `ARC-001 §6` → `DAT-001` → `API-001` → `SEC-001` → `routers/` |
 | Frontend engineer | `ARC-001 §6.2/§10` → `frontend/README.md` → `API-001 §1` (bootstrap contract) |
+| Form / approval engineer | `FFC-001` → `ADR-0009` → `DAT-001 §3/§4` → `API-001 §2.2/§2.3` |
 | SRE / operator | `ARC-001 §9/§12/§13` → `SEC-001 §8` → `README.md` Quick start |
 
 ## Conventions / 约定
@@ -45,8 +47,8 @@ This directory contains the platform's **standard design and architecture docume
 ```bash
 cd backend
 python3 -m ruff check app tests # code style
-python3 tests/smoke.py             # 110 end-to-end assertions
-python3 -c "from app.main import app; print(len(app.openapi()['paths']))"      # 96
+python3 tests/smoke.py             # 157 end-to-end assertions
+python3 -c "from app.main import app; print(len(app.openapi()['paths']))"      # 120
 
 cd ../frontend
 pnpm typecheck && pnpm build
@@ -55,14 +57,16 @@ pnpm check:i18n                    # en/zh key parity
 
 ## Screenshots / 界面截图
 
-`docs/screenshots/` contains 13 real Chromium headless captures (1920×1080), referenced by both root READMEs:
+`docs/screenshots/` contains 15 real Chromium headless captures (the two domestic captures are 1680×1050), referenced by both root READMEs:
 
 | File | View |
 | --- | --- |
 | `login.png` | Login, demo accounts, SSO, MFA |
 | `dashboard.png` / `dashboard-dark.png` | Light and dark theme |
 | `form-designer.png` | Visual form designer |
+| `form-domestic.png` | Domestic form designer: grouped 44-field palette, Rules tab, `TABLE_SUM` formula, field permissions |
 | `workflow-studio.png` | DAG workflow canvas |
+| `workflow-domestic.png` | Domestic approval studio: 14-node palette, task center, approve / reject / return / transfer / add signer |
 | `knowledge-rag.png` | Knowledge base + retrieval test |
 | `knowledge-upload.png` | Multi-format drag-and-drop upload dialog and results |
 | `ai-agents.png` | Agent chat with tool steps |
