@@ -36,7 +36,7 @@ English: [README.md](README.md) · 后端：[backend/README.zh-CN.md](backend/RE
 | **可视化表单设计（国内增强）** | **5 组 44 种字段**（身份证 / 统一社会信用代码 / 手机号 / 银行卡 / 金额大写 / 省市区 / 手写签名 / 明细表 / 组织架构 …），分组折叠字段面板、拖拽排序、Basic/Rules/Advanced 属性页签、`visible_when` / `required_when` 条件规则编辑器、受限 AST 公式沙箱（19 个函数，含 `CNY_UPPER` / `TABLE_SUM`）、明细表行公式与列汇总、节点字段权限、表单版本与恢复、流水号、打印视图、CSV 导出、桌面/移动预览、草稿/发布/归档、提交记录 |
 | **可视化流程编排与审批** | 可拖拽 DAG 画布 + 贝塞尔连线，**14 种节点**（新增 `cc` / `parallel` / `join` / `delay` / `subflow`）、连线模式、条件组、节点配置面板、缩放、自动布局、图校验（环检测）、同步 dry-run 执行引擎，**并新增长时人工审批运行时**：9 类审批人规则（部门主管 / 逐级主管 …）、4 种会签方式（或签 / 会签 / 比例 / 依次审批）、并行分支与汇聚、抄送、驳回 / 退回 / 转交 / 加签 / 撤回 / 催办、超时与委托、任务中心、实例时间线、graph 快照与流程版本固定 |
 | **工作流门户与数据权限** | 重构工作流主页：可发起流程目录、我发起的流程（状态/日期/关键词过滤）、待办审批；发起改为基于表单 schema 的动态表单（不再提交裸 JSON），关联表单改为下拉选择；每个流程提供需认证跳转的可分享 URL `/#/start/{code}`，支持登录回跳，便于集成其它系统；行级 `all` / `audit` / `self` 数据范围与只读审计管理员角色 |
-| **RESTful 接口** | `/api/v1` 下 126 个 OpenAPI 路径（161 个路由装饰器），Pydantic 请求/响应模型，自动生成 `/docs`，统一错误码，所有写操作记录审计日志 |
+| **RESTful 接口** | `/api/v1` 下 134 个 OpenAPI 路径（174 个路由装饰器），Pydantic 请求/响应模型，自动生成 `/docs`，统一错误码，所有写操作记录审计日志 |
 | **MCP** | 基于 `fastmcp` 的真实 streamable HTTP 服务 `/mcp`（initialize / tools/list / tools/call / resources / prompts），20 个平台工具外加 `call_remote_tool` 桥接工具，并内置零依赖 JSON-RPC 降级实现 |
 | **MCP 服务** | 独立的 `/mcp/servers` 注册表：`http`/`sse`/`stdio` 连接 CRUD、认证配置、探测/同步工具发现、健康与状态、启用/禁用、按服务调用工具 |
 | **技能** | 独立的 `/skills` 注册表：可安装目录、安装/启用/禁用/卸载/重装、可编辑技能文件与磁盘镜像、可选 `server_id` 关联 MCP 服务、关联服务同步 |
@@ -69,7 +69,7 @@ ai-lowcode-platform/
 │   │   └── services/          workflow_engine, flow_runtime, form_catalog, form_rules,
 │   │                          rag, llm, mcp_tools, mcp_servers, model_providers,
 │   │                          documents, mcp_journal, skill_catalog, skill_files, sso
-│   └── tests/smoke.py         189 项端到端 API 断言
+│   └── tests/smoke.py         205 项端到端 API 断言
 └── frontend/                   Vite + React + TS 单页应用
     └── src/
         ├── components/ui/     shadcn 风格基础组件、对话框、Toast、表格
@@ -180,7 +180,7 @@ MCP 工具：`list_forms`、`get_form`、`submit_form`、`query_records`、`list
 
 ## 国际化与主题
 
-- **默认英文**，顶栏可切换中文（持久化到 `localStorage`）。全部文案位于 `frontend/src/i18n/locales.ts`（每种语言 789 个叶子键，已校验无缺失）。
+- **默认英文**，顶栏可切换中文（持久化到 `localStorage`）。全部文案位于 `frontend/src/i18n/locales.ts`（每种语言 824 个叶子键，已校验无缺失）。
 - **主题默认 `system`**，跟随 `prefers-color-scheme`，也可强制 light/dark。设计变量为 `frontend/src/index.css` 中的 HSL CSS 变量，遵循 shadcn/ui 约定。
 - 平台默认值（`default_locale`、`default_theme` 等）同时通过 `/api/v1/settings` 存于服务端。
 
@@ -195,13 +195,14 @@ MCP 工具：`list_forms`、`get_form`、`submit_form`、`query_records`、`list
 | [系统架构设计](docs/architecture.zh-CN.md)（[English](docs/architecture.md)） | C4 上下文/容器/组件视图、请求管线、运行时流程、部署、质量属性、需求可追溯 |
 | [AI 系统设计](docs/ai-design.zh-CN.md)（[English](docs/ai-design.md)） | LLM 运行时与降级、ReAct 编排、统一工具注册表、RAG/BM25、MCP 暴露、Prompt 规范、安全边界、生产升级路径 |
 | [安全架构](docs/security.md) | JWT/PBKDF2/TOTP/WebAuthn、26 项 RBAC 权限、SSO、MFA 策略、审计、威胁模型 |
-| [数据模型](docs/data-model.md) | 26 张表、17 个索引、JSON 列、ER 图、种子数据、惰性迁移 |
-| [REST 与 MCP 接口规范](docs/api-reference.md) | 全部 126 个 OpenAPI 路径、MCP 方法、20 个工具 Schema、调用示例 |
+| [数据模型](docs/data-model.md) | 29 张表、20 个索引、JSON 列、ER 图、种子数据、惰性迁移 |
+| [REST 与 MCP 接口规范](docs/api-reference.md) | 全部 134 个 OpenAPI 路径、MCP 方法、24 个工具 Schema、调用示例 |
 | [MCP 服务、技能与调用日记](docs/mcp-skills.md) | 独立注册表、技能生命周期、可编辑文件、调用日记、来源与权限 |
 | [知识库上传](docs/knowledge-upload.md) | 支持格式、解析流程、上传接口与校验 |
 | [AI 模型服务](docs/ai-models.md) | 六类模型、配置 CRUD、密钥只写、默认项与运行时解析 |
 | [国内表单与审批规范](docs/form-flow-domestic.md) | 44 种本地化字段、法定校验、公式沙箱、14 节点审批运行时、会签/并行/委托、版本、打印与 CSV |
 | [工作流门户与数据权限](docs/workflow-portal-and-data-scopes.md) | 数据范围、审计管理员、schema 驱动发起表单、认证分享链接、智能体意图与 20 个工具 |
+| [通知与个人中心](docs/notifications-and-profile.md) | 成员组/标签审批人、通知中心（Webhook/邮件）、个人中心、智能体审批动作工具 |
 | [ADR 索引](docs/adr/README.md) | 10 份已接受的架构决策记录与模板 |
 
 真实界面截图：[`docs/screenshots/`](docs/screenshots/)。
@@ -220,7 +221,7 @@ pnpm typecheck && pnpm build
 pnpm check:i18n                         # 中英文案键一致性
 ```
 
-冒烟测试包含 189 项断言：认证/RBAC（含 403 拒绝）、表单发布/校验/提交、DAG 校验与两条条件分支、RAG 索引、智能体工具循环、MCP 握手/工具列举/调用、SSO 演示建号、MFA 注册、审计日志、SPA 托管与 API 404 处理，以及 MCP 调用日记（记录、统计、CSV 导出、清空）与技能完整生命周期（安装、文件增删查改、路径穿越拒绝、启用/禁用/卸载/重装），外加拆分后的 MCP 服务/技能注册表、AI 模型服务、多格式知识库上传与智能体资源绑定。另有 32 项覆盖数据权限与门户：admin/operator/auditor 三种范围、审计管理员只读拒绝、提交/实例/任务的自身范围过滤、目录 / 我发起的 / 统计 / 分享信息 / 启动 schema、认证跳转、20 个工具、身份与审批意图、`action_request` schema，以及动态表单真实创建实例。最后 41 项覆盖国内表单/审批运行时：44 字段目录、法定校验、明细表公式、人民币大写、条件显隐、移动渲染、版本、CSV/打印、14 节点、9 类审批人规则、4 种会签方式，以及 `expense_approval` 完整链路（部门主管 → 并行会签 → 汇聚 → 抄送 → 通过），并覆盖转交、加签、退回、催办、撤回、超时扫描与委托。
+冒烟测试包含 205 项断言：认证/RBAC（含 403 拒绝）、表单发布/校验/提交、DAG 校验与两条条件分支、RAG 索引、智能体工具循环、MCP 握手/工具列举/调用、SSO 演示建号、MFA 注册、审计日志、SPA 托管与 API 404 处理，以及 MCP 调用日记（记录、统计、CSV 导出、清空）与技能完整生命周期（安装、文件增删查改、路径穿越拒绝、启用/禁用/卸载/重装），外加拆分后的 MCP 服务/技能注册表、AI 模型服务、多格式知识库上传与智能体资源绑定。另有 32 项覆盖数据权限与门户：admin/operator/auditor 三种范围、审计管理员只读拒绝、提交/实例/任务的自身范围过滤、目录 / 我发起的 / 统计 / 分享信息 / 启动 schema、认证跳转、当时 20 个工具、身份与审批意图、`action_request` schema，以及动态表单真实创建实例；另有 16 项覆盖成员组/用户标签：组 CRUD、11 类审批人规则、组规则实例解析、待办通知未读数、偏好往返、渠道脱敏、个人中心与同意/通知/撤回智能体意图。最后 41 项覆盖国内表单/审批运行时：44 字段目录、法定校验、明细表公式、人民币大写、条件显隐、移动渲染、版本、CSV/打印、14 节点、9 类审批人规则（现为 11 类，含成员组/标签）、4 种会签方式，以及 `expense_approval` 完整链路（部门主管 → 并行会签 → 汇聚 → 抄送 → 通过），并覆盖转交、加签、退回、催办、撤回、超时扫描与委托。
 
 ---
 

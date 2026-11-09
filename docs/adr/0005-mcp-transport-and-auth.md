@@ -50,4 +50,4 @@ Additionally, MCP clients are external processes — identity must be attached w
 
 ## Verification
 
-Live checks: `POST /mcp` `initialize` → 200 with capabilities + `serverInfo`, `tools/list` → 20 tools, `tools/call` → RBAC-checked result; `/docs` and `/openapi.json` still work; SPA catch-all protects `/mcp`. Smoke suite asserts all three MCP methods plus REST invoke and skill sync.
+Live checks: `POST /mcp` `initialize` → 200 with capabilities + `serverInfo`, `tools/list` → 24 tools, `tools/call` → RBAC-checked result; `/docs` and `/openapi.json` still work; SPA catch-all protects `/mcp`. Smoke suite asserts all three MCP methods plus REST invoke and skill sync.

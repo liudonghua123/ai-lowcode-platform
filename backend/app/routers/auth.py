@@ -173,6 +173,59 @@ def me(user: dict = Depends(deps.get_current_user)):
     return _public_user(user)
 
 
+class ProfileUpdateIn(BaseModel):
+    display_name: str | None = Field(None, max_length=120)
+    email: str | None = Field(None, max_length=200)
+
+
+@router.put("/me", summary="Update my own profile (display name / email)")
+def update_me(body: ProfileUpdateIn, user: dict = Depends(deps.get_current_user),
+              request: Request = None):
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not patch:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    patch["updated_at"] = db.now()
+    db.update("users", user["id"], patch)
+    deps.audit(user["username"], "auth.profile.update", "user", list(patch), request=request)
+    return _public_user(deps._load_user(user["id"]) or user)
+
+
+@router.get("/me/overview", summary="Personal center counters for the current user")
+def me_overview(user: dict = Depends(deps.get_current_user)):
+    from ..services import notify
+    name = user["username"]
+    pending_tasks = int(db.scalar(
+        "SELECT COUNT(*) FROM flow_tasks WHERE assignee=? AND status='pending'", (name,)) or 0)
+    done_tasks = int(db.scalar(
+        "SELECT COUNT(*) FROM flow_tasks WHERE assignee=? AND status!='pending'", (name,)) or 0)
+    instances_running = int(db.scalar(
+        "SELECT COUNT(*) FROM workflow_instances WHERE started_by=? AND status='running'",
+        (name,)) or 0)
+    instances_total = int(db.scalar(
+        "SELECT COUNT(*) FROM workflow_instances WHERE started_by=?", (name,)) or 0)
+    submissions = int(db.scalar(
+        "SELECT COUNT(*) FROM form_submissions WHERE submitted_by=?", (name,)) or 0)
+    groups = [dict(r) for r in db.q(
+        "SELECT code, name FROM user_groups WHERE enabled=1 AND members LIKE ? ORDER BY id",
+        (f'%\"{name}\"%',))]
+    delegations_out = [dict(r) for r in db.q(
+        "SELECT principal, agent, starts_at, ends_at FROM flow_delegations "
+        "WHERE principal=? AND enabled=1", (name,))]
+    delegations_in = [dict(r) for r in db.q(
+        "SELECT principal, agent, starts_at, ends_at FROM flow_delegations "
+        "WHERE agent=? AND enabled=1", (name,))]
+    return {
+        "profile": _public_user(user),
+        "tasks": {"pending": pending_tasks, "done": done_tasks},
+        "instances": {"running": instances_running, "total": instances_total},
+        "submissions": submissions,
+        "notifications_unread": notify.unread_count(name),
+        "groups": groups,
+        "delegations": {"outgoing": delegations_out, "incoming": delegations_in},
+        "data_scope": user.get("data_scope"),
+    }
+
+
 @router.post("/logout", summary="Logout (client should discard the token)")
 def logout(user: dict = Depends(deps.get_current_user), request: Request = None):
     deps.audit(user["username"], "auth.logout", "session", {}, request=request)

@@ -87,10 +87,24 @@ TOOL_SPECS: list[dict] = [
      "inputSchema": _obj({"code": {"type": "string"}, "data": {"type": "object"}}, ["code", "data"])},
     {"name": "submit_form_data", "description": "Submit collected data to a published form.",
      "inputSchema": _obj({"code": {"type": "string"}, "data": {"type": "object"}}, ["code", "data"])},
+    {"name": "act_approval_task",
+     "description": "Act on one of my pending approval tasks (approve / reject / return / "
+                    "transfer / addsign). Without task_id the first pending task is used.",
+     "inputSchema": _obj({"action": {"type": "string", "description": "approve | reject | "
+                                     "return | transfer | addsign_before | addsign_after"},
+                          "instance_id": {"type": "integer"}, "task_id": {"type": "integer"},
+                          "comment": {"type": "string"}, "assignee": {"type": "string"},
+                          "return_to": {"type": "string"}})},
+    {"name": "withdraw_instance", "description": "Withdraw one of my running instances.",
+     "inputSchema": _obj({"instance_id": {"type": "integer"}, "reason": {"type": "string"}})},
+    {"name": "urge_instance", "description": "Urge the current approvers of a visible instance.",
+     "inputSchema": _obj({"instance_id": {"type": "integer"}, "message": {"type": "string"}})},
+    {"name": "my_notifications", "description": "My in-app notifications (optionally unread only).",
+     "inputSchema": _obj({"unread": {"type": "boolean"}, "limit": {"type": "integer"}})},
 ]
 
 # Tools that mutate business data — blocked for the read-only auditor role.
-WRITE_TOOLS = {"submit_form", "run_workflow", "start_workflow_instance", "submit_form_data"}
+WRITE_TOOLS = {"submit_form", "run_workflow", "start_workflow_instance", "submit_form_data", "act_approval_task", "withdraw_instance", "urge_instance"}
 
 PERMISSION_MAP = {
     "list_forms": "form:read", "get_form": "form:read", "submit_form": "form:submit",
@@ -101,6 +115,8 @@ PERMISSION_MAP = {
     "get_stats": "dashboard:view",
     "list_startable_workflows": "workflow:read", "get_form_schema": "form:read",
     "start_workflow_instance": "workflow:run", "submit_form_data": "form:submit",
+    "act_approval_task": "workflow:run", "withdraw_instance": "workflow:run",
+    "urge_instance": "workflow:run", "my_notifications": None,
 }
 
 
@@ -359,6 +375,90 @@ def _submit_form_data(args: dict) -> dict:
             "status": "submitted", "answer": result["answer"]}
 
 
+
+
+def _act_approval_task(args: dict) -> dict:
+    """Approve / reject / return / transfer / add-sign; defaults to first pending task."""
+    from . import flow_runtime
+    username = (current_user() or {}).get("username") or ""
+    action = args.get("action") or "approve"
+    if action not in flow_runtime.ACTIONS or action in {"withdraw", "urge"}:
+        raise ValueError(f"Unsupported action: {action}")
+    task_id, instance_id = args.get("task_id"), args.get("instance_id")
+    if not task_id:
+        sql = ("SELECT t.id, t.instance_id FROM flow_tasks t "
+               "JOIN workflow_instances i ON i.id=t.instance_id "
+               "WHERE t.assignee=? AND t.status='pending'")
+        params: list = [username]
+        if instance_id:
+            sql += " AND t.instance_id=?"
+            params.append(instance_id)
+        row = db.q1(sql + " ORDER BY t.id LIMIT 1", params)
+        if not row:
+            raise ValueError("No pending approval task found for you")
+        task_id, instance_id = row["id"], row["instance_id"]
+    elif not instance_id:
+        row = db.q1("SELECT instance_id FROM flow_tasks WHERE id=?", (task_id,))
+        if not row:
+            raise ValueError(f"Task not found: {task_id}")
+        instance_id = row["instance_id"]
+    payload = {"comment": args.get("comment"), "assignee": args.get("assignee"),
+               "signature": args.get("signature"), "return_to": args.get("return_to")}
+    view = flow_runtime.act(instance_id, task_id, action, username, payload)
+    pending = [t.get("assignee") for t in view.get("tasks") or []
+               if t.get("status") == "pending"]
+    return {"ok": True, "instance_id": instance_id, "task_id": task_id, "action": action,
+            "instance_status": view.get("status"), "pending": pending}
+
+
+def _withdraw_instance(args: dict) -> dict:
+    from . import flow_runtime
+    username = (current_user() or {}).get("username") or ""
+    iid = args.get("instance_id")
+    if not iid:
+        row = db.q1("SELECT id FROM workflow_instances WHERE started_by=? AND status='running' "
+                    "ORDER BY id DESC LIMIT 1", (username,))
+        if not row:
+            raise ValueError("No running instance of yours to withdraw")
+        iid = row["id"]
+    view = flow_runtime.withdraw(int(iid), username, args.get("reason") or "")
+    return {"ok": True, "instance_id": iid, "instance_status": view.get("status")}
+
+
+def _urge_instance(args: dict) -> dict:
+    from . import flow_runtime
+    username = (current_user() or {}).get("username") or ""
+    iid = args.get("instance_id")
+    if not iid:
+        # most recent running instance of mine, else one pending on me
+        row = db.q1("SELECT id FROM workflow_instances WHERE started_by=? AND status='running' "
+                    "ORDER BY id DESC LIMIT 1", (username,))
+        if not row:
+            row = db.q1("SELECT instance_id AS id FROM flow_tasks WHERE assignee=? AND "
+                        "status='pending' ORDER BY id DESC LIMIT 1", (username,))
+        if not row:
+            raise ValueError("No visible running instance to urge")
+        iid = row["id"]
+    row = db.q1("SELECT * FROM workflow_instances WHERE id=?", (iid,))
+    user = current_user() or {"username": username}
+    if not row or not data_scope.row_visible(user, "workflow_instances", row):
+        raise ValueError(f"Instance not found: {iid}")
+    result = flow_runtime.urge(int(iid), username, args.get("message") or "")
+    return {"ok": True, **result}
+
+
+def _my_notifications(args: dict) -> dict:
+    from . import notify
+    username = (current_user() or {}).get("username") or ""
+    limit = min(int(args.get("limit") or 20), 100)
+    sql = "SELECT * FROM notifications WHERE recipient=?"
+    if args.get("unread"):
+        sql += " AND read_at IS NULL"
+    rows = [dict(r) for r in db.q(sql + " ORDER BY id DESC LIMIT ?", (username, limit))]
+    return {"notifications": rows, "total": len(rows),
+            "unread": notify.unread_count(username)}
+
+
 HANDLERS: dict[str, Callable[[dict], dict]] = {
     "list_forms": _list_forms, "get_form": _get_form, "submit_form": _submit_form,
     "query_records": _query_records, "list_workflows": _list_workflows,
@@ -372,6 +472,8 @@ HANDLERS: dict[str, Callable[[dict], dict]] = {
     "get_form_schema": _get_form_schema,
     "start_workflow_instance": _start_workflow_instance,
     "submit_form_data": _submit_form_data,
+    "act_approval_task": _act_approval_task, "withdraw_instance": _withdraw_instance,
+    "urge_instance": _urge_instance, "my_notifications": _my_notifications,
 }
 
 

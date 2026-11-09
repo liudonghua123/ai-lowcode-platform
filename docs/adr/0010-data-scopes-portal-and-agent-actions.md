@@ -106,15 +106,17 @@ intercepted before collection so "my workflows" is not read as "create one".
   friendlier for embedding but means an anonymous visitor must click once to
   sign in.
 - Historical ADRs keep their verification figures as decision-time snapshots;
-  current figures are **126 OpenAPI paths / 161 route decorators / 26 tables /
-  17 indexes / 20 MCP tools / 789 i18n keys / 189 smoke assertions**.
+  the figures were **126 OpenAPI paths / 161 route decorators / 26 tables /
+  17 indexes / 20 MCP tools / 789 i18n keys / 189 smoke assertions** at the time of
+  this ADR; [ADR-0011](0011-groups-tags-notifications-and-agent-actions.md) later
+  grew them to **134 / 174 / 29 / 20 / 24 / 824 / 205**.
 
 ## Verification
 
-`ruff check app tests`, `tests/smoke.py` (189 passed / 0 failed),
-`pnpm typecheck`, `pnpm check:i18n` (789/789), `pnpm build`, and the Markdown
+`ruff check app tests`, `tests/smoke.py` (205 passed / 0 failed),
+`pnpm typecheck`, `pnpm check:i18n` (824/824), `pnpm build`, and the Markdown
 link check all pass. New smoke assertions cover all three scopes, auditor
 read-only denial, self-scope filtering on submissions / instances / tasks, all
-portal endpoints, auth-gating of the start schema and share metadata, 20 tool
+portal endpoints, auth-gating of the start schema and share metadata, 24 tool
 specs, identity / approvals intents, the `action_request` schema, and a
 dynamic-form action that creates a real instance (withdrawn in teardown).

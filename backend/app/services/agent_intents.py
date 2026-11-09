@@ -144,6 +144,40 @@ _DIRECT_TOOLS: list[tuple[str, str]] = [
 ]
 
 
+def _act_plan(message: str) -> dict | None:
+    """Route approve / reject / withdraw / urge / notification requests."""
+    m = message
+    num = re.search(r"#(\d+)", m) or re.search(r"(?:实例|instance)\s*(\d+)", m, re.I)
+    iid = int(num.group(1)) if num else None
+    has_obj = bool(re.search(r"审批|待办|任务|申请|流程|approval|task|instance|workflow", m, re.I)) or iid is not None
+    if re.search(r"同意|批准|通过|approve", m, re.I) and has_obj:
+        args = {"action": "approve",
+                "comment": "同意（AI 智能体代办）/ Approved via AI agent"}
+        if iid:
+            args["instance_id"] = iid
+        return {"mode": "tool", "tool": "act_approval_task", "args": args}
+    if re.search(r"驳回|拒绝|reject", m, re.I) and has_obj:
+        args = {"action": "reject",
+                "comment": m if len(m) < 60 else "驳回（AI 智能体代办）/ Rejected via AI agent"}
+        if iid:
+            args["instance_id"] = iid
+        return {"mode": "tool", "tool": "act_approval_task", "args": args}
+    if re.search(r"撤回|撤销|withdraw", m, re.I):
+        args = {}
+        if iid:
+            args["instance_id"] = iid
+        return {"mode": "tool", "tool": "withdraw_instance", "args": args}
+    if re.search(r"催办|urge", m, re.I):
+        args = {"message": m}
+        if iid:
+            args["instance_id"] = iid
+        return {"mode": "tool", "tool": "urge_instance", "args": args}
+    if re.search(r"我的.{0,2}通知|未读消息|通知中心|my notifications?", m, re.I):
+        return {"mode": "tool", "tool": "my_notifications",
+                "args": {"unread": bool(re.search(r"未读|unread", m, re.I))}}
+    return None
+
+
 def plan(message: str, user: dict, context: dict | None = None) -> dict:
     """Classify a chat message into collect / tool / chat."""
     ctx = context or {}
@@ -152,6 +186,9 @@ def plan(message: str, user: dict, context: dict | None = None) -> dict:
     collect = _collect_plan(message, user)
     if collect:
         return collect
+    act = _act_plan(message)
+    if act:
+        return act
     m = (message or "").lower()
     for pattern, tool in _DIRECT_TOOLS:
         if re.search(pattern, m, re.I):
@@ -212,6 +249,33 @@ def summarize_direct(tool: str, result: dict, message: str) -> str:
                 lines.append(f"• #{x.get('id')} {x.get('form_name') or x.get('form_code')} · {x.get('status')} · {x.get('serial_no') or ''}")
             else:
                 lines.append(f"• {x.get('name')} ({x.get('code')}) · {x.get('field_count', 0)} fields")
+        return head + ("\n" + "\n".join(lines) if lines else ("\n（暂无）" if zh else "\n(none)"))
+    if tool == "act_approval_task":
+        status = result.get("instance_status")
+        if zh:
+            return (f"已完成 **{result.get('action')}**：实例 #{result.get('instance_id')} "
+                    f"当前状态 **{status or '—'}**。"
+                    + (f"待审批人：{', '.join(result.get('pending') or [])}。"
+                       if result.get("pending") else ""))
+        return (f"Done **{result.get('action')}** on instance #{result.get('instance_id')}; "
+                f"status is now **{status or '—'}**."
+                + (f" Pending approvers: {', '.join(result.get('pending') or [])}."
+                   if result.get("pending") else ""))
+    if tool == "withdraw_instance":
+        return (f"实例 #{result.get('instance_id')} 已撤回（{result.get('instance_status')}）。" if zh
+                else f"Instance #{result.get('instance_id')} withdrawn "
+                     f"({result.get('instance_status')}).")
+    if tool == "urge_instance":
+        names = ", ".join(result.get("assignees") or [])
+        return (f"已向 {result.get('urged', 0)} 位审批人发送催办：{names}。" if zh
+                else f"Urged {result.get('urged', 0)} approvers: {names}.")
+    if tool == "my_notifications":
+        items = result.get("notifications") or []
+        head = (f"你有 {result.get('unread', 0)} 条未读通知，最近 {len(items)} 条："
+                if zh else f"You have {result.get('unread', 0)} unread notifications; "
+                           f"latest {len(items)}:")
+        lines = [f"• #{n.get('id')} [{n.get('event')}] {n.get('title')} "
+                 f"{'(未读)' if not n.get('read_at') else ''}" for n in items[:8]]
         return head + ("\n" + "\n".join(lines) if lines else ("\n（暂无）" if zh else "\n(none)"))
     return (f"已查询：{tool} 返回 {len(result)} 个字段。" if zh else
             f"Query complete: {tool} returned {len(result)} fields.")

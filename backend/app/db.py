@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   dept TEXT,
+  tags TEXT NOT NULL DEFAULT '[]',
   role_ids TEXT NOT NULL DEFAULT '[]',
   otp_secret TEXT,
   otp_enabled INTEGER NOT NULL DEFAULT 0,
@@ -351,6 +352,40 @@ CREATE TABLE IF NOT EXISTS flow_delegations (
   created_at TEXT NOT NULL
 );
 
+-- Free-form member groups used by the "groups" approver rule.
+CREATE TABLE IF NOT EXISTS user_groups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  description TEXT,
+  members TEXT NOT NULL DEFAULT '[]',
+  tags TEXT NOT NULL DEFAULT '[]',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+
+-- In-app notification inbox (channel delivery state is per channel row).
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  recipient TEXT NOT NULL,
+  event TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  ref_type TEXT,
+  ref_id TEXT,
+  read_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+-- Per-user notification preferences: which channels receive which events.
+CREATE TABLE IF NOT EXISTS notify_prefs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  events TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
+
 -- Minimal organization graph for leader-chain and department approver rules.
 CREATE TABLE IF NOT EXISTS org_units (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -384,6 +419,9 @@ CREATE INDEX IF NOT EXISTS idx_flow_tasks_assignee ON flow_tasks(assignee, statu
 CREATE INDEX IF NOT EXISTS idx_flow_delegations_principal ON flow_delegations(principal, enabled);
 CREATE INDEX IF NOT EXISTS idx_org_units_parent ON org_units(parent_code);
 CREATE INDEX IF NOT EXISTS idx_submissions_serial ON form_submissions(form_id, serial_no);
+CREATE INDEX IF NOT EXISTS idx_user_groups_code ON user_groups(code);
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient, read_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC);
 """
 
 # Columns added after the first release. SQLite cannot add them through
@@ -433,6 +471,9 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     },
     "mcp_call_logs": {
         "target": "TEXT",
+    },
+    "users": {
+        "tags": "TEXT NOT NULL DEFAULT '[]'",
     },
 }
 

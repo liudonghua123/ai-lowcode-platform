@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .. import db
-from . import form_catalog, form_rules, workflow_engine
+from . import form_catalog, form_rules, notify, workflow_engine
 
 APPROVER_RULES = [
     {"code": "users", "en": "Designated members", "zh": "指定成员"},
@@ -30,6 +30,8 @@ APPROVER_RULES = [
     {"code": "form_field", "en": "Members from a form field", "zh": "表单成员字段"},
     {"code": "previous", "en": "Previous node approver", "zh": "上一节点审批人"},
     {"code": "self_select", "en": "Chosen by initiator", "zh": "发起人自选"},
+    {"code": "groups", "en": "Member group", "zh": "按成员组"},
+    {"code": "tags", "en": "Users by tag", "zh": "按用户标签"},
 ]
 
 SIGN_MODES = [
@@ -60,6 +62,7 @@ NODE_CONFIG_HINTS: dict[str, list[str]] = {
     "start": ["form_code", "initiator_scope"],
     "approval": ["approver_rule", "assignees", "sign_mode", "ratio", "leader_level",
                  "exclude_initiator", "empty_policy", "timeout_hours", "timeout_action",
+                 "groups", "tags",
                  "comment_required", "signature_required", "field_permissions",
                  "reject_policy", "allow_return", "allow_transfer", "allow_addsign"],
     "cc": ["approver_rule", "assignees"],
@@ -97,11 +100,12 @@ def _json(value: Any, fallback: Any) -> Any:
 
 
 def _active_users() -> list[dict]:
-    rows = db.q("SELECT username, dept, role_ids FROM users WHERE status='active'")
+    rows = db.q("SELECT username, dept, role_ids, tags FROM users WHERE status='active'")
     out = []
     for r in rows:
         d = dict(r)
         d["role_ids"] = _json(d.get("role_ids"), [])
+        d["tags"] = _json(d.get("tags"), [])
         out.append(d)
     return out
 
@@ -176,6 +180,17 @@ def resolve_assignees(node: dict, state: dict, *, previous: str | None = None) -
         names = [previous] if previous else []
     elif rule == "self_select":
         names = [str(x) for x in (state.get("selected_approvers") or []) if x]
+    elif rule == "groups":
+        wanted = {str(x) for x in (cfg.get("groups") or cfg.get("assignees") or [])}
+        for g in db.q("SELECT code, members FROM user_groups WHERE enabled=1"):
+            if str(g["code"]) in wanted:
+                for m in (_json(g["members"], []) or []):
+                    names.append(str(m))
+    elif rule == "tags":
+        wanted = {str(x) for x in (cfg.get("tags") or cfg.get("assignees") or [])}
+        for u in users:
+            if wanted & {str(x) for x in (u.get("tags") or [])}:
+                names.append(u["username"])
 
     # de-duplicate, drop initiator if requested, then apply delegation
     seen: set[str] = set()
@@ -263,6 +278,12 @@ def _snapshot(instance_id: int) -> dict:
     }
 
 
+def _wf_title(instance_id: int) -> str:
+    row = db.q1("SELECT w.name FROM workflow_instances i "
+                "JOIN workflows w ON w.id=i.workflow_id WHERE i.id=?", (instance_id,))
+    return row["name"] if row else "Workflow"
+
+
 def _create_tasks(instance_id: int, node: dict, names: list[str], *,
                   round_no: int = 1, node_type: str = "approval") -> list[int]:
     cfg = node.get("config") or {}
@@ -276,6 +297,16 @@ def _create_tasks(instance_id: int, node: dict, names: list[str], *,
             "assignee": name, "seq": seq, "status": "pending",
             "due_at": due, "created_at": _now(), "round": round_no,
         }))
+    if names:
+        wf = _wf_title(instance_id)
+        if node_type == "cc":
+            notify.emit("cc", names, f"流程抄送 / CC: {wf}",
+                        f"Node: {node.get('name') or node['id']}",
+                        "workflow_instance", str(instance_id))
+        else:
+            notify.emit("task_created", names, f"待办审批 / Approval needed: {wf}",
+                        f"Node: {node.get('name') or node['id']}",
+                        "workflow_instance", str(instance_id))
     return ids
 
 
@@ -299,6 +330,10 @@ def _enter(instance_id: int, node_ids: list[str], state: dict, *, depth: int = 0
             active = [x for x in active if x != nid]
             status = "approved"
             _log(instance_id, {"event": "end", "node": nid, "name": node.get("name")})
+            notify.emit("instance_completed", [state["row"]["started_by"]],
+                        f"审批通过 / Approved: {_wf_title(instance_id)}",
+                        "Your instance finished with approval.",
+                        "workflow_instance", str(instance_id))
             continue
         if ntype == "join":
             mode = cfg.get("join_mode") or "all"
@@ -508,6 +543,9 @@ def act(instance_id: int, task_id: int, action: str, actor: str,
         db.run("UPDATE flow_tasks SET status='skipped' WHERE instance_id=? AND node_id=? "
                "AND status='pending'", (instance_id, task["node_id"]))
         _update_state(instance_id, status="rejected", current_nodes=[], finished_at=now)
+        notify.emit("task_result", [state["row"]["started_by"]],
+                    f"审批拒绝 / Rejected: {_wf_title(instance_id)}",
+                    payload.get("comment") or "", "workflow_instance", str(instance_id))
         return instance_view(instance_id, "rejected")
 
     # Decide whether the node is complete.
@@ -589,10 +627,15 @@ def withdraw(instance_id: int, actor: str, reason: str = "") -> dict:
         raise ValueError("Only the initiator can withdraw")
     if state["row"]["status"] != "running":
         raise ValueError("Only running instances can be withdrawn")
+    pending = _pending_tasks(instance_id)
     db.run("UPDATE flow_tasks SET status='skipped' WHERE instance_id=? AND status='pending'",
            (instance_id,))
     _update_state(instance_id, status="canceled", current_nodes=[], finished_at=_now())
     _log(instance_id, {"event": "withdrawn", "actor": actor, "reason": reason})
+    if pending:
+        notify.emit("withdrawn", [t["assignee"] for t in pending],
+                    f"流程已撤回 / Withdrawn: {_wf_title(instance_id)}",
+                    reason or "", "workflow_instance", str(instance_id))
     return instance_view(instance_id, "canceled")
 
 
@@ -603,6 +646,10 @@ def urge(instance_id: int, actor: str, message: str = "") -> dict:
     tasks = _pending_tasks(instance_id)
     _log(instance_id, {"event": "urged", "actor": actor, "message": message,
                        "assignees": [t["assignee"] for t in tasks]})
+    if tasks:
+        notify.emit("urged", [t["assignee"] for t in tasks],
+                    f"催办提醒 / Urged: {_wf_title(instance_id)}",
+                    message or "", "workflow_instance", str(instance_id))
     return {"instance_id": instance_id, "urged": len(tasks),
             "assignees": [t["assignee"] for t in tasks]}
 
@@ -620,6 +667,10 @@ def sweep_timeouts() -> dict:
         action = (node.get("config") or {}).get("timeout_action") or "remind"
         _log(task["instance_id"], {"event": "timeout", "node": task["node_id"],
                                     "task": task["id"], "action": action})
+        notify.emit("timeout", [task["assignee"]],
+                    f"任务超时 / Task overdue: {_wf_title(task['instance_id'])}",
+                    f"Node: {task['node_name'] or task['node_id']}",
+                    "flow_task", str(task["id"]))
         if action == "auto_approve":
             act(task["instance_id"], task["id"], "approve", "system",
                 {"comment": "Auto approved on timeout"})

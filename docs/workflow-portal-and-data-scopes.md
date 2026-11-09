@@ -209,11 +209,11 @@ consistently with the intent planner.
 ```bash
 cd backend
 python3 -m ruff check app tests            # All checks passed
-PYTHONPATH=. python3 tests/smoke.py        # 189 passed, 0 failed
+PYTHONPATH=. python3 tests/smoke.py        # 189 passed, 0 failed (205 after ADR-0011)
 
 cd ../frontend
 pnpm typecheck                            # pass
-pnpm check:i18n                           # en 789 / zh 789, 0 missing
+pnpm check:i18n                           # en 789 / zh 789 at the time, 0 missing (824 now)
 pnpm build                                # pass
 ```
 
@@ -223,8 +223,10 @@ catalog / mine / stats / share-info / start-schema, auth-gating of the schema,
 20 tool specs, identity and approvals intents, `action_request` schema and the
 dynamic-form action creating a real instance (withdrawn afterwards).
 
-Runtime figures: **126 OpenAPI paths / 161 route decorators / 26 tables /
-17 indexes / 20 MCP tools / 789 i18n keys / 189 assertions**.
+Runtime figures at the time: **126 OpenAPI paths / 161 route decorators /
+26 tables / 17 indexes / 20 MCP tools / 789 i18n keys / 189 assertions**;
+[ADR-0011](adr/0011-groups-tags-notifications-and-agent-actions.md) later grew them
+to **134 / 174 / 29 / 20 / 24 / 824 / 205**.
 
 ## 7. Known limitations
 

@@ -15,7 +15,7 @@ The platform exposes the same capabilities through three channels: an MCP server
 
 Introduce `backend/app/services/mcp_tools.py` as the **single source of truth**:
 
-- `TOOL_SPECS` — 20 tools, each with `name`, `description` and a strict JSON Schema `inputSchema` (`additionalProperties: false`, explicit `required`).
+- `TOOL_SPECS` — 24 tools, each with `name`, `description` and a strict JSON Schema `inputSchema` (`additionalProperties: false`, explicit `required`).
 - `PERMISSION_MAP` — tool → RBAC permission (e.g. `submit_form → form:submit`, `run_workflow → workflow:run`).
 - `HANDLERS` — tool → pure Python function over `db`, `rag`, `workflow_engine`.
 - `call_tool(name, args, user)` — validates the name, resolves the effective user (explicit argument or `ContextVar`), enforces `PERMISSION_MAP` via `deps.has_permission`, then dispatches.
@@ -47,4 +47,4 @@ All three consumers call `call_tool()`; the fastmcp layer only adapts typed Pyth
 
 ## Verification
 
-`backend/tests/smoke.py` asserts MCP `tools/list` returns the 20 tools, `tools/call` and `/mcp/invoke` produce identical results, act/hybrid agents execute ≥2 real tool calls, and RBAC denial is enforced at the tool layer. Result: **189 passed / 0 failed**.
+`backend/tests/smoke.py` asserts MCP `tools/list` returns the 24 tools, `tools/call` and `/mcp/invoke` produce identical results, act/hybrid agents execute ≥2 real tool calls, and RBAC denial is enforced at the tool layer. Result: **205 passed / 0 failed**.

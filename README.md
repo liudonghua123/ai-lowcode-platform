@@ -36,7 +36,7 @@ Frontend: **Vite + React + TypeScript + shadcn/ui design system** · Backend: **
 | **Visual form designer (China-ready)** | **44 field types in 5 groups** (身份证 / 统一社会信用代码 / 手机号 / 银行卡 / 金额大写 / 省市区 / 手写签名 / 明细表 / 组织架构 …), click-to-add grouped palette, drag-to-reorder, Basic/Rules/Advanced property tabs, `visible_when` / `required_when` rule editor, restricted-AST formula sandbox (19 functions incl. `CNY_UPPER` / `TABLE_SUM`), detail-table row formulas & summaries, node-level field permissions, form versions & restore, serial numbers, print view, CSV export, desktop/mobile preview, draft/publish/archive, submissions |
 | **Visual workflow orchestration & approval** | Drag-and-drop DAG canvas with bezier edges, **14 node types** (adds `cc` / `parallel` / `join` / `delay` / `subflow`), connect mode, condition groups, node config panel, zoom, auto-layout, cycle detection, synchronous dry-run engine **plus a long-running human approval runtime**: 9 approver rules (部门主管 / 逐级主管 …), 4 signing modes (或签 / 会签 / 比例 / 依次审批), parallel branches & join, CC, reject / return / transfer / add-sign / withdraw / urge, timeouts & delegation, task center, instance timeline, pinned graph snapshots & workflow versions |
 | **Workflow portal & data scopes** | Redesigned workflow home: startable catalogue, my-workflows with status/date/keyword filters, pending approvals; launching opens a schema-driven form (no raw JSON) and binds forms via a dropdown; each workflow exposes an auth-gated shareable `/#/start/{code}` URL with a sign-in round trip for external systems; row-level `all` / `audit` / `self` scopes plus a read-only audit administrator role |
-| **REST API** | 126 OpenAPI paths (161 route decorators) under `/api/v1`, Pydantic request/response models, auto OpenAPI at `/docs`, consistent error codes, audit logging on every mutation |
+| **REST API** | 134 OpenAPI paths (174 route decorators) under `/api/v1`, Pydantic request/response models, auto OpenAPI at `/docs`, consistent error codes, audit logging on every mutation |
 | **MCP** | Real `fastmcp` streamable-HTTP server at `/mcp` (initialize / tools/list / tools/call / resources / prompts), 20 platform tools plus a `call_remote_tool` bridge, and a dependency-free built-in JSON-RPC fallback |
 | **MCP servers** | Independent `/mcp/servers` registry: CRUD for `http`/`sse`/`stdio` connections, auth config, probe / sync tool discovery, health & status, enable/disable and per-server tool invocation |
 | **Skills** | Independent `/skills` registry: installable catalog, install/enable/disable/uninstall/reinstall, editable skill files with disk mirror, optional `server_id` link to an MCP server, linked-server sync |
@@ -180,7 +180,7 @@ Frontend: `frontend/.env.example` (`VITE_API_BASE=/api/v1`, proxied to `:8000` b
 
 ## i18n & theme
 
-- **English is the default**; switch to 中文 in the header (persisted in `localStorage`). All UI strings live in `frontend/src/i18n/locales.ts` (789 leaf keys per locale, verified complete).
+- **English is the default**; switch to 中文 in the header (persisted in `localStorage`). All UI strings live in `frontend/src/i18n/locales.ts` (824 leaf keys per locale, verified complete).
 - **Theme defaults to `system`** and follows `prefers-color-scheme`; light/dark can be forced. Design tokens are CSS HSL variables in `frontend/src/index.css`, following the shadcn/ui convention.
 - Platform defaults (`default_locale`, `default_theme`, …) are also stored server-side via `/api/v1/settings`.
 
@@ -195,14 +195,15 @@ Full design and architecture documentation lives in [`docs/`](docs/README.md):
 | [System Architecture](docs/architecture.md) ([中文](docs/architecture.zh-CN.md)) | C4 context/container/component views, request pipeline, runtime sequences, deployment, quality attributes, traceability |
 | [AI System Design](docs/ai-design.md) ([中文](docs/ai-design.zh-CN.md)) | LLM runtime & degradation, ReAct orchestration, unified tool registry, RAG/BM25, MCP exposure, prompt spec, safety boundary, production upgrade path |
 | [Security Architecture](docs/security.md) | JWT/PBKDF2/TOTP/WebAuthn, 25 RBAC permissions, SSO, MFA policy, audit, threat model |
-| [Data Model](docs/data-model.md) | 26 tables, 17 indexes, JSON columns, ER diagram, seed data, lazy migrations |
-| [REST & MCP API Reference](docs/api-reference.md) | All 126 OpenAPI paths, MCP methods, 20 tool schemas, examples |
+| [Data Model](docs/data-model.md) | 29 tables, 20 indexes, JSON columns, ER diagram, seed data, lazy migrations |
+| [REST & MCP API Reference](docs/api-reference.md) | All 134 OpenAPI paths, MCP methods, 24 tool schemas, examples |
 | [MCP Servers, Skills & Call Journal](docs/mcp-skills.md) | Independent registries, skill lifecycle, editable files, invocation journal, sources and RBAC |
 | [Knowledge Upload](docs/knowledge-upload.md) | Supported formats, parsing pipeline, upload API and validation |
 | [AI Model Services](docs/ai-models.md) | Six model categories, provider CRUD, write-only keys, defaults and runtime resolution |
 | [Domestic Form & Approval Spec](docs/form-flow-domestic.md) | 44 China-localized fields, statutory validation, formula sandbox, 14-node approval runtime, countersign / parallel / delegation, versions, print & CSV |
-| [Workflow Portal & Data Scopes](docs/workflow-portal-and-data-scopes.md) | Data scopes, auditor role, schema-driven launch form, auth-gated share URL, agent intents and 20 tools |
-| [ADR index](docs/adr/README.md) | 10 accepted architecture decision records + template |
+| [Workflow Portal & Data Scopes](docs/workflow-portal-and-data-scopes.md) | Data scopes, auditor role, schema-driven launch form, auth-gated share URL, agent intents and 24 tools |
+| [Notifications & Personal Center](docs/notifications-and-profile.md) | Member groups & tags approver rules, notification hub (webhook/email), personal center, agent act/withdraw/urge tools |
+| [ADR index](docs/adr/README.md) | 11 accepted architecture decision records + template |
 
 Real UI screenshots: [`docs/screenshots/`](docs/screenshots/).
 
@@ -220,7 +221,7 @@ pnpm typecheck && pnpm build
 pnpm check:i18n                         # en/zh key parity
 ```
 
-The smoke suite covers 189 assertions: auth/RBAC (including a 403 denial), form publish/validation/submit, DAG validation and both condition branches, RAG indexing, agent tool loops, MCP handshake/tools/call, SSO demo provisioning, MFA enrollment, audit logs, SPA hosting and API 404 handling, plus the MCP call journal (recording, statistics, CSV export, clearing) and the full skill lifecycle (install, file CRUD, path traversal rejection, enable/disable/uninstall/reinstall), plus the split MCP server / Skill registries, AI model providers, multi-format knowledge upload and agent resource bindings. A further 32 assertions cover data scopes and the portal: admin/operator/auditor scopes, auditor read-only denial, self-scope filtering of submissions / instances / tasks, catalog / mine / stats / share-info / start-schema, auth-gating, 20 tool specs, identity and approvals intents, the `action_request` schema, and a dynamic-form action that creates a real instance. The final 41 assertions cover the domestic form/approval runtime: 44-field catalog, statutory validators, detail-table formulas, RMB amount-in-words, conditional display, mobile render, versions, CSV/print, 14 node types, 9 approver rules, 4 signing modes, and the full `expense_approval` chain (leader → parallel countersign → join → CC → approved) plus transfer, add-sign, return, urge, withdraw, timeout sweep and delegation.
+The smoke suite covers 205 assertions: auth/RBAC (including a 403 denial), form publish/validation/submit, DAG validation and both condition branches, RAG indexing, agent tool loops, MCP handshake/tools/call, SSO demo provisioning, MFA enrollment, audit logs, SPA hosting and API 404 handling, plus the MCP call journal (recording, statistics, CSV export, clearing) and the full skill lifecycle (install, file CRUD, path traversal rejection, enable/disable/uninstall/reinstall), plus the split MCP server / Skill registries, AI model providers, multi-format knowledge upload and agent resource bindings. A further 32 assertions cover data scopes and the portal: admin/operator/auditor scopes, auditor read-only denial, self-scope filtering of submissions / instances / tasks, catalog / mine / stats / share-info / start-schema, auth-gating, 20 tool specs, identity and approvals intents, the `action_request` schema, and a dynamic-form action that creates a real instance. A final block of 16 assertions covers member groups & user tags: group CRUD, 11 approver rules, a groups-rule instance resolving its members, task_created unread increments, prefs roundtrip, channel masking, personal overview and approve / notifications / withdraw agent intents. The final 41 assertions cover the domestic form/approval runtime: 44-field catalog, statutory validators, detail-table formulas, RMB amount-in-words, conditional display, mobile render, versions, CSV/print, 14 node types, 9 approver rules, 4 signing modes, and the full `expense_approval` chain (leader → parallel countersign → join → CC → approved) plus transfer, add-sign, return, urge, withdraw, timeout sweep and delegation.
 
 ---
 

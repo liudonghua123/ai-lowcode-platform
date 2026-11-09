@@ -30,6 +30,7 @@ from .routers import (
     mcp,
     mcp_servers,
     meta,
+    notifications,
     rbac,
     skills,
     workflows,
@@ -175,7 +176,8 @@ app.add_middleware(MCPAuthASGIMiddleware)
 
 for r in (auth.router, rbac.router, forms.router, workflows.router, knowledge.router,
           agents.router, mcp.router, mcp_servers.router, skills.router,
-          ai_providers.router, audit.router, meta.router, meta.settings_router):
+          ai_providers.router, audit.router, meta.router, meta.settings_router,
+          notifications.router):
     app.include_router(r, prefix=settings.api_prefix)
 
 app.router.routes.extend(mcp_routes)

@@ -69,7 +69,7 @@ flowchart LR
         SEC["安全层<br/>JWT · PBKDF2 · TOTP<br/>WebAuthn · RBAC"]
         HOST["SPA 静态托管<br/>frontend/dist 回退"]
     end
-    DB[(SQLite<br/>WAL · 26 张表)]
+    DB[(SQLite<br/>WAL · 29 张表)]
     FS[("dist/ 静态资源")]
 
     SPA -->|JSON + Bearer| API
@@ -86,7 +86,7 @@ flowchart LR
 | 容器 | 职责 | 技术 |
 | --- | --- | --- |
 | SPA | 全部 UI、可视化设计器、i18n、主题 | Vite 6、React 18、TypeScript、Tailwind 3、shadcn/ui 风格组件、lucide-react |
-| REST 层 | 126 个 OpenAPI 路径、Pydantic 模型、错误语义 | FastAPI 0.128+、`APIRouter`、`Depends` |
+| REST 层 | 134 个 OpenAPI 路径、Pydantic 模型、错误语义 | FastAPI 0.128+、`APIRouter`、`Depends` |
 | MCP 服务 | `initialize` / `tools/list` / `tools/call` / resources / prompts | `fastmcp` 4.1.6 `http_app(path="/mcp")` + 内置 JSON-RPC 回退 |
 | 服务层 | 纯业务逻辑，不感知 HTTP | `app/services/` 下 Python 模块 |
 | 安全层 | 身份、令牌、密码/MFA、权限校验 | 标准库 `hashlib`/`hmac`、HS256 JWT、`contextvars` |
@@ -118,6 +118,8 @@ app/
     ├── rag.py              中英混合分词、分块、BM25、上下文拼装
     ├── llm.py              3 个后端、ReAct 编排、有据回答
     ├── data_scope.py       ★ 行级数据范围（all/audit/self）、归属过滤、row_visible()
+    ├── notify.py           ★ 通知中心：站内收件箱 + Webhook/邮件渠道，emit() 永不抛错
+    ├── notify.py           ★ 通知中心：站内收件箱 + Webhook/邮件渠道，emit() 永不抛错
     ├── agent_intents.py    ★ collect/tool/chat 意图规划、schema 驱动动作请求
     └── sso.py              5 种 Provider 适配、demo 模式、身份自动建号
 ```
@@ -141,7 +143,7 @@ main.tsx → HashRouter · ThemeProvider · I18nProvider · ToastProvider · App
 
 `lib/api.ts` 封装 `fetch`，统一注入 JWT、`ApiError` 与全局 `401 → 登出` 事件。`AppContext` 登录后一次性加载 `/auth/me` + `/meta/bootstrap`，并暴露 `can(permission)`。
 
-共享组件 `components/SchemaForm.tsx` 在四处渲染后端 `FormField[]` schema：设计器发起弹窗、门户发起弹窗、公开分享页、智能体动态收集卡片，并调用 `/forms/{id}/evaluate` 获取显隐/权限/计算值。`pages/WorkflowPortal.tsx` 是重构后的工作流主页（目录 / 我发起的 / 待办审批）；`pages/StartWorkflow.tsx` 是公开 `/#/start/{code}` 落地页；`App.tsx` 将其注册为公开路由并用 `safeNext()` 完成登录回跳，`Workflows.tsx` 提供门户/设计器视图切换。
+共享组件 `components/SchemaForm.tsx` 在四处渲染后端 `FormField[]` schema：设计器发起弹窗、门户发起弹窗、公开分享页、智能体动态收集卡片，并调用 `/forms/{id}/evaluate` 获取显隐/权限/计算值。`pages/WorkflowPortal.tsx` 是重构后的工作流主页（目录 / 我发起的 / 待办审批）；`pages/StartWorkflow.tsx` 是公开 `/#/start/{code}` 落地页；`components/layout/NotificationBell.tsx` 顶栏通知铃铛（未读轮询 + 收件箱）；`pages/Profile.tsx` 个人中心（资料、密码、统计、组、委托、通知偏好）；`components/layout/NotificationBell.tsx` 顶栏通知铃铛（未读轮询 + 收件箱）；`pages/Profile.tsx` 个人中心（资料、密码、统计、组、委托、通知偏好）；`App.tsx` 将其注册为公开路由并用 `safeNext()` 完成登录回跳，`Workflows.tsx` 提供门户/设计器视图切换。
 
 ## 7. 关键运行时流程
 
@@ -244,13 +246,13 @@ SPA catch-all 无条件注册，并在每次请求时解析 `dist/index.html`，
 
 | 关注点 | 实现 |
 | --- | --- |
-| i18n | 每种语言 789 个叶子键，默认 `en`，`localStorage` 持久化，同步 `<html lang>`，缺失回退英文 |
+| i18n | 每种语言 824 个叶子键，默认 `en`，`localStorage` 持久化，同步 `<html lang>`，缺失回退英文 |
 | 主题 | `system`（默认）/ `light` / `dark`，监听 `prefers-color-scheme`，HSL CSS 变量，`meta[theme-color]` |
 | 审计 | 所有写操作 → `audit_logs(actor, action, resource, detail, ip, level, created_at)` |
 | 配置 | `python-dotenv` → 冻结 `Settings`；`settings` 表支持运行时覆盖 |
 | 错误 | `HTTPException` 401 / 403 / 404 / 422；客户端 `ApiError`；401 触发全局登出 |
 | 可观测 | `/api/v1/meta/health`、`/meta/stats`、`/agents/meta/runtime`、`/agents/meta/bindings`、`/mcp/status`、`/mcp/calls/stats`、`/knowledge/stats` |
-| 测试 | `backend/tests/smoke.py` 189 项端到端断言；`pnpm typecheck`、`pnpm build`、`pnpm check:i18n`、`ruff check` |
+| 测试 | `backend/tests/smoke.py` 205 项端到端断言；`pnpm typecheck`、`pnpm build`、`pnpm check:i18n`、`ruff check` |
 
 ## 11. 技术决策摘要
 
@@ -275,7 +277,7 @@ SPA catch-all 无条件注册，并在每次请求时解析 `dist/index.html`，
 | 安全性 | HS256 JWT、PBKDF2、逐路由 RBAC、审计 | RS256 / 密钥轮换、限流、密钥管理 |
 | AI 准确性 | 确定性 mock + BM25 有据回答 | 真实 LLM、向量库、重排序 |
 | 可扩展性 | 进程内索引、同步执行 | 流程任务队列、外部向量库 |
-| 可测试性 | 189 项冒烟断言，无需网络 | 契约测试、压力测试、MCP 一致性套件 |
+| 可测试性 | 205 项冒烟断言，无需网络 | 契约测试、压力测试、MCP 一致性套件 |
 | 可运维性 | health / stats / runtime 端点 | 结构化日志、指标、链路追踪 |
 
 ## 13. 已知限制
@@ -294,7 +296,7 @@ SPA catch-all 无条件注册，并在每次请求时解析 `dist/index.html`，
 | 国内表单增强（FFC-001） | 44 字段目录、法定校验、AST 公式、版本、打印/CSV | `services/form_catalog.py`, `services/form_rules.py`, `routers/forms.py`, `pages/Forms.tsx` |
 | 可视化流程编排 | DAG 校验器 + 执行引擎 | `services/workflow_engine.py`, `pages/Workflows.tsx` |
 | 人工审批运行时（ADR-0009） | 长时实例、会签、并行/汇聚、任务动作、委托 | `services/flow_runtime.py`, `routers/workflows.py`, `pages/Workflows.tsx` |
-| REST API | 版本化路由 | `routers/*.py`（161 个路由装饰器 → 126 个 OpenAPI 路径） |
+| REST API | 版本化路由 | `routers/*.py`（174 个路由装饰器 → 134 个 OpenAPI 路径） |
 | MCP 传输 + 工具注册表 | 双传输 MCP + 单一注册表 | `mcp_server.py`, `routers/mcp.py`, `services/mcp_tools.py` |
 | MCP 服务（独立） | CRUD、探测/同步、声明工具、远程调用 | `routers/mcp_servers.py`, `services/mcp_servers.py`, `mcp_servers` |
 | 技能（独立） | 生命周期、目录、可编辑文件、`server_id` 关联 | `routers/skills.py`, `services/skill_*.py`, `mcp_skills` |

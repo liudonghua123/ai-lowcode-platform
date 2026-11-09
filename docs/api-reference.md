@@ -9,7 +9,7 @@
 | Machine-readable source | `GET /openapi.json`, interactive UI at `GET /docs` |
 | Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Security Architecture](security.md) · [Data Model](data-model.md) · [Domestic Form & Approval](form-flow-domestic.md) · [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md) |
 
-> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **126 个 OpenAPI 路径 / 161 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 20 个平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank/Vision 六类模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。**国内场景增强**：`/forms` 提供 44 种字段的目录、服务端法定校验、公式求值、版本快照、打印视图与 CSV 导出；`/workflows` 提供 14 种节点、会签/并行/汇聚的人工审批运行时、任务中心、转交/加签/撤回/催办、超时与委托，详见 [国内表单与审批规范](form-flow-domestic.md)。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
+> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **134 个 OpenAPI 路径 / 174 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 24 个平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank/Vision 六类模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。**国内场景增强**：`/forms` 提供 44 种字段的目录、服务端法定校验、公式求值、版本快照、打印视图与 CSV 导出；`/workflows` 提供 14 种节点、会签/并行/汇聚的人工审批运行时、任务中心、转交/加签/撤回/催办、超时与委托，详见 [国内表单与审批规范](form-flow-domestic.md)。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
 
 ## 1. Conventions
 
@@ -42,7 +42,7 @@
 }
 ```
 
-## 2. REST endpoints (126 paths)
+## 2. REST endpoints (134 paths)
 
 ### 2.1 Authentication & MFA — `/auth`
 
@@ -249,7 +249,7 @@ Streamable HTTP, primary transport `fastmcp` 4.1.6 (`http_app(path="/mcp")`), bu
 | `initialize` | `protocolVersion`, `capabilities`, `clientInfo` | `protocolVersion`, `capabilities{tools,prompts,resources}`, `serverInfo`, `instructions` |
 | `notifications/initialized` | — | `202` |
 | `ping` | — | `{}` |
-| `tools/list` | — | 20 tools with `inputSchema` |
+| `tools/list` | — | 24 tools with `inputSchema` |
 | `tools/call` | `name`, `arguments` | `content`, `structuredContent`, `isError` |
 | `resources/list`, `resources/read`, `resources/templates/list` | `uri` | `platform://stats`, `platform://forms/{code}`, `platform://workflows/{code}` |
 | `prompts/list`, `prompts/get` | `name`, `arguments` | `analyze_workflow`, `answer_from_kb` |
@@ -264,7 +264,7 @@ curl -X POST http://localhost:8000/mcp \
        "params":{"name":"list_forms","arguments":{"status":"published"}}}'
 ```
 
-## 4. Platform tools (20)
+## 4. Platform tools (24)
 
 All input schemas are strict objects (`additionalProperties: false`).
 
@@ -290,10 +290,26 @@ All input schemas are strict objects (`additionalProperties: false`).
 | `get_form_schema` | `code` | — | `form:read` | no |
 | `start_workflow_instance` | `code`, `data` | — | `workflow:run` | **yes** |
 | `submit_form_data` | `code`, `data` | — | `form:submit` | **yes** |
+| `act_approval_task` | — | `action`, `instance_id`, `task_id`, `comment`, `assignee`, `return_to` | `workflow:run` | **yes** |
+| `withdraw_instance` | — | `instance_id`, `reason` | `workflow:run` | **yes** |
+| `urge_instance` | — | `instance_id`, `message` | `workflow:run` | **yes** |
+| `my_notifications` | — | `unread`, `limit` | (self context) | no |
+| `act_approval_task` | — | `action`, `instance_id`, `task_id`, `comment`, `assignee`, `return_to` | `workflow:run` | **yes** |
+| `withdraw_instance` | — | `instance_id`, `reason` | `workflow:run` | **yes** |
+| `urge_instance` | — | `instance_id`, `message` | `workflow:run` | **yes** |
+| `my_notifications` | — | `unread`, `limit` | (self context) | no |
+| `act_approval_task` | — | `action`, `instance_id`, `task_id`, `comment`, `assignee`, `return_to` | `workflow:run` | **yes** |
+| `withdraw_instance` | — | `instance_id`, `reason` | `workflow:run` | **yes** |
+| `urge_instance` | — | `instance_id`, `message` | `workflow:run` | **yes** |
+| `my_notifications` | — | `unread`, `limit` | (self context) | no |
+| `act_approval_task` | — | `action`, `instance_id`, `task_id`, `comment`, `assignee`, `return_to` | `workflow:run` | **yes** |
+| `withdraw_instance` | — | `instance_id`, `reason` | `workflow:run` | **yes** |
+| `urge_instance` | — | `instance_id`, `message` | `workflow:run` | **yes** |
+| `my_notifications` | — | `unread`, `limit` | (self context) | no |
 
 `list_tools("openai")` emits the same specs as OpenAI function-calling definitions for the ReAct loop. `mcp_tools.agent_tools(agent)` further filters this catalog to the tools declared by the agent's bound MCP servers (`server_ids`) and skills (`skill_ids`); enabled servers may add remote tool specs resolved through `mcp_servers.external_specs`. The fastmcp bridge tool `call_remote_tool` lets MCP clients reach those remote tools.
 
-The eight self-service tools (13–20) are data-scope aware. The first four resolve the caller from the bound user context and accept **no `username` argument**, so one principal cannot query another's identity, approvals, submissions or instances. `WRITE_TOOLS = {submit_form, run_workflow, start_workflow_instance, submit_form_data}` is rejected for the read-only audit administrator. See [WFP-001 §5](workflow-portal-and-data-scopes.md).
+The twelve self-service tools (13–24) are data-scope aware; see above and [NPF-001 §5](notifications-and-profile.md).
 
 ## 5. Typical sequences
 
@@ -344,4 +360,4 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/workflows/in
 - All business endpoints are versioned under `/api/v1`; breaking changes require a new prefix.
 - MCP protocol version is negotiated during `initialize` (no hard-coded client requirement).
 - `/openapi.json` is the authoritative machine-readable contract; regenerate this table when routers change.
-- `backend/tests/smoke.py` (189 assertions) exercises the critical subset of these endpoints end-to-end, including the full domestic expense approval chain.
+- `backend/tests/smoke.py` (205 assertions) exercises the critical subset of these endpoints end-to-end, including the full domestic expense approval chain.

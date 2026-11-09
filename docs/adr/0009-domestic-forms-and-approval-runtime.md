@@ -31,7 +31,7 @@ The initial form designer exposed 14 field types and a single `required` flag; t
 
 - 44 field types / 5 groups, statutory validation, RMB-in-words, formula sandbox, detail summaries, conditional rules, field permissions, versions, serial numbers, print and CSV export.
 - 14 node types, 9 approver rules, 4 signing modes, parallel + join, 8 human actions, timeouts and delegation.
-- 41 new smoke assertions cover the full countersign → parallel → join → CC chain; total 189 passed / 0 failed.
+- 41 new smoke assertions cover the full countersign → parallel → join → CC chain; total 189 passed / 0 failed at the time; 205 after [ADR-0011](0011-groups-tags-notifications-and-agent-actions.md).
 - Frontend gets a real task center and node-configuration editor without a new route.
 
 **Costs / risks**
@@ -40,7 +40,7 @@ The initial form designer exposed 14 field types and a single `required` flag; t
 - Instance state is spread across `workflow_instances` columns and `flow_tasks`; a future high-volume deployment would want a transactional task queue.
 - `signature`, `image` and `attachment` store metadata in the payload, not blobs in object storage.
 - `subflow` and `delay` are simulated steps; `region` ships a reduced administrative-division dataset.
-- Documentation figures moved from 97 paths / 133 decorators / 21 tables / 10 indexes / 651 keys / 116 assertions to **126 / 161 / 26 / 17 / 789 / 189**.
+- Documentation figures moved from 97 paths / 133 decorators / 21 tables / 10 indexes / 651 keys / 116 assertions to **126 / 161 / 26 / 17 / 789 / 189**, later grown by ADR-0010/0011 to **134 / 174 / 29 / 20 / 824 / 205**.
 
 ## Alternatives considered
 
@@ -54,7 +54,7 @@ The initial form designer exposed 14 field types and a single `required` flag; t
 ## Validation
 
 - `python3 -m ruff check app tests` — clean
-- `python3 tests/smoke.py` — 189 passed / 0 failed
+- `python3 tests/smoke.py` — 189 passed / 0 failed (205 after ADR-0011)
 - `pnpm typecheck`, `pnpm check:i18n` (740/740), `pnpm build` — pass
 - Browser verification of `/forms` (Rules tab, 5 palette groups) and `/workflows` (14 node types, task center) with zero console errors
 - Quick Tunnel health: `form_field_types: 44`, `workflow_node_types: 14`, `org_units: 6`

@@ -11,14 +11,17 @@ This directory contains the platform's **standard design and architecture docume
 | `ARC-001` | [architecture.md](architecture.md) · [中文](architecture.zh-CN.md) | EN / 中文 | C4 context–container–component views, request pipeline, runtime sequences, deployment, quality attributes, traceability |
 | `AI-001` | [ai-design.md](ai-design.md) · [中文](ai-design.zh-CN.md) | EN / 中文 | **AI system design**: LLM runtime, ReAct orchestration, unified tool registry, RAG/BM25, MCP exposure, prompt spec, safety boundary, upgrade path |
 | `SEC-001` | [security.md](security.md) | EN (中文摘要) | Identity/JWT, PBKDF2, TOTP, WebAuthn, MFA policy, 26 RBAC permissions, SSO, audit, threat model, production checklist |
-| `DAT-001` | [data-model.md](data-model.md) | EN (中文摘要) | 26 tables, 17 indexes, JSON columns, ER diagram, data-access helpers, seed data, migration notes |
-| `API-001` | [api-reference.md](api-reference.md) | EN (中文摘要) | REST conventions, all **126 OpenAPI paths**, MCP methods, 20 tool schemas, examples |
+| `DAT-001` | [data-model.md](data-model.md) | EN (中文摘要) | 29 tables, 20 indexes, JSON columns, ER diagram, data-access helpers, seed data, migration notes |
+| `API-001` | [api-reference.md](api-reference.md) | EN (中文摘要) | REST conventions, all **134 OpenAPI paths**, MCP methods, 24 tool schemas, examples |
 | `MCP-001` | [mcp-skills.md](mcp-skills.md) | EN (中文摘要) | Independent MCP server and Skill registries, skill lifecycle, editable files, call journal, sources and RBAC |
 | `KNB-001` | [knowledge-upload.md](knowledge-upload.md) | EN (中文摘要) | Multi-format knowledge upload, parsing pipeline, format catalog, API and validation |
 | `AIM-001` | [ai-models.md](ai-models.md) | EN (中文摘要) | Six AI model categories, provider CRUD, write-only keys, defaults and runtime resolution |
 | `FFC-001` | [form-flow-domestic.md](form-flow-domestic.md) | EN (中文摘要) | **Domestic form & approval spec**: 44 China-localized fields, statutory validation, AST formula sandbox, detail tables, conditional rules, node field permissions, 14-node human approval runtime, countersign / parallel / delegation, versions, print & CSV, `expense_claim` example |
-| `WFP-001` | [workflow-portal-and-data-scopes.md](workflow-portal-and-data-scopes.md) | EN (中文摘要) | **Data scopes & workflow portal**: all/audit/self/anonymous scopes, read-only auditor, schema-driven launch form, auth-gated `/#/start/{code}` share URL, agent intents + 20 tools |
-| `ADR-*` | [adr/README.md](adr/README.md) | EN | 10 accepted architecture decision records + ADR template and conventions |
+| `WFP-001` | [workflow-portal-and-data-scopes.md](workflow-portal-and-data-scopes.md) | EN (中文摘要) | **Data scopes & workflow portal**: all/audit/self/anonymous scopes, read-only auditor, schema-driven launch form, auth-gated `/#/start/{code}` share URL, agent intents + 24 tools |
+| `NPF-001` | [notifications-and-profile.md](notifications-and-profile.md) | EN (中文摘要) | **People-side loop**: member groups & user tags approver rules, notification hub (in-app/webhook/email × 7 events), personal center, agent act/withdraw/urge/notification tools (24 total) |
+| `NPF-001` | [notifications-and-profile.md](notifications-and-profile.md) | EN (中文摘要) | **People-side loop**: member groups & user tags approver rules, notification hub (in-app/webhook/email × 7 events), personal center, agent act/withdraw/urge/notification tools (24 total) |
+| `NPF-001` | [notifications-and-profile.md](notifications-and-profile.md) | EN (中文摘要) | **People-side loop**: member groups & user tags approver rules, notification hub (in-app/webhook/email × 7 events), personal center, agent act/withdraw/urge/notification tools (24 total) |
+| `ADR-*` | [adr/README.md](adr/README.md) | EN | 11 accepted architecture decision records + ADR template and conventions |
 | — | [README.md](../README.md) · [中文](../README.zh-CN.md) | EN / 中文 | Project overview, quick start, demo accounts, screenshots |
 | — | [backend/README.md](../backend/README.md) · [中文](../backend/README.zh-CN.md) | EN / 中文 | Backend runbook, endpoints, security, configuration |
 | — | [frontend/README.md](../frontend/README.md) · [中文](../frontend/README.zh-CN.md) | EN / 中文 | Frontend pages, layout, design system, i18n/theme, data flow |
@@ -49,7 +52,7 @@ This directory contains the platform's **standard design and architecture docume
 ```bash
 cd backend
 python3 -m ruff check app tests # code style
-python3 tests/smoke.py             # 189 end-to-end assertions
+python3 tests/smoke.py             # 205 end-to-end assertions
 python3 -c "from app.main import app; print(len(app.openapi()['paths']))"      # 126
 
 cd ../frontend

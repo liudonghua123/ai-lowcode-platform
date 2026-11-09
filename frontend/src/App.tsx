@@ -15,6 +15,7 @@ import ModelProviders from '@/pages/ModelProviders'
 import Rbac from '@/pages/Rbac'
 import AuthSettings from '@/pages/AuthSettings'
 import Audit from '@/pages/Audit'
+import Profile from '@/pages/Profile'
 import Settings from '@/pages/Settings'
 
 /** Only allow in-app relative redirects (blocks //evil.com open redirects). */
@@ -61,6 +62,7 @@ function AppRoutes() {
       <Route path="/rbac" element={<Rbac />} />
       <Route path="/auth" element={<AuthSettings />} />
       <Route path="/audit" element={<Audit />} />
+      <Route path="/profile" element={<Profile />} />
       <Route path="/settings" element={<Settings />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

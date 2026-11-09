@@ -743,6 +743,7 @@ function NodeProperties({ node, operators, patch, patchConfig, remove, meta, for
     { code: 'leader_chain', label: 'Leader chain' },
     { code: 'form_field', label: 'Form field' }, { code: 'previous', label: 'Previous approver' },
     { code: 'self_select', label: 'Initiator selects' },
+    { code: 'groups', label: 'Member group' }, { code: 'tags', label: 'Users by tag' },
   ]
   const signModes = meta?.sign_modes || [
     { code: 'any', label: 'Or-sign' }, { code: 'all', label: 'Countersign' },
@@ -802,6 +803,12 @@ function NodeProperties({ node, operators, patch, patchConfig, remove, meta, for
               onChange={(e) => patchConfig('leader_level', Number(e.target.value))} /></Field>}
         {cfg.approver_rule === 'form_field' && <Field label={t('workflows.cfg.form_field')}>
           <Input value={cfg.form_field || ''} onChange={(e) => patchConfig('form_field', e.target.value)} /></Field>}
+        {cfg.approver_rule === 'groups' && <Field label={t('workflows.cfg.groups')} hint="managers, finance">
+          <Input value={csv(cfg.groups || cfg.assignees)} placeholder="managers, finance"
+            onChange={(e) => setList('groups', e.target.value)} /></Field>}
+        {cfg.approver_rule === 'tags' && <Field label={t('workflows.cfg.tags')} hint="manager, vip">
+          <Input value={csv(cfg.tags || cfg.assignees)} placeholder="manager, vip"
+            onChange={(e) => setList('tags', e.target.value)} /></Field>}
       </>}
 
       {node.type === 'approval' && <>

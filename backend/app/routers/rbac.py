@@ -30,6 +30,7 @@ class UserIn(BaseModel):
     email: str | None = None
     display_name: str | None = None
     dept: str | None = None
+    tags: list[str] = []
     role_ids: list[int] = []
     status: str = "active"
 
@@ -38,6 +39,7 @@ class UserPatch(BaseModel):
     email: str | None = None
     display_name: str | None = None
     dept: str | None = None
+    tags: list[str] | None = None
     role_ids: list[int] | None = None
     status: str | None = None
     password: str | None = Field(None, min_length=8)
@@ -60,7 +62,7 @@ def _role_out(row: dict) -> dict:
 
 
 def _user_out(row: dict) -> dict:
-    out = db.loads(row, "role_ids", "passkeys") or {}
+    out = db.loads(row, "role_ids", "passkeys", "tags") or {}
     out.pop("password_hash", None)
     out.pop("otp_secret", None)
     out["status"] = out.get("status")
@@ -152,7 +154,8 @@ def create_user(body: UserIn, user: dict = Depends(deps.require("rbac:write")),
     uid = db.insert("users", {
         "username": body.username, "email": body.email, "display_name": body.display_name or body.username,
         "password_hash": security.hash_password(body.password or "demo1234"),
-        "status": body.status, "dept": body.dept, "role_ids": body.role_ids,
+        "status": body.status, "dept": body.dept, "tags": body.tags,
+        "role_ids": body.role_ids,
         "provider": "local", "created_at": db.now(), "updated_at": db.now()})
     deps.audit(user["username"], "rbac.user.create", f"user:{body.username}",
                {"role_ids": body.role_ids}, request=request)
@@ -200,6 +203,77 @@ def delete_user(user_id: int, user: dict = Depends(deps.require("rbac:write")),
         raise HTTPException(status_code=400, detail="The bootstrap administrator cannot be deleted")
     db.delete("users", user_id)
     deps.audit(user["username"], "rbac.user.delete", f"user:{row['username']}", {}, request=request)
+    return {"ok": True}
+
+
+class GroupIn(BaseModel):
+    code: str = Field(..., pattern=r"^[a-z][a-z0-9_-]{1,39}$")
+    name: str
+    description: str | None = None
+    members: list[str] = []
+    tags: list[str] = []
+    enabled: bool = True
+
+
+class GroupPatch(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    members: list[str] | None = None
+    tags: list[str] | None = None
+    enabled: bool | None = None
+
+
+def _group_out(row: dict) -> dict:
+    out = db.loads(row, "members", "tags") or {}
+    out["enabled"] = bool(out.get("enabled"))
+    out["member_count"] = len(out.get("members") or [])
+    return out
+
+
+@router.get("/groups", summary="List member groups (used by the groups approver rule)")
+def list_groups(_user: dict = Depends(deps.require("rbac:read"))):
+    rows = db.q("SELECT * FROM user_groups ORDER BY id")
+    return {"groups": [_group_out(r) for r in rows], "total": len(rows)}
+
+
+@router.post("/groups", status_code=201, summary="Create a member group")
+def create_group(body: GroupIn, user: dict = Depends(deps.require("rbac:write")),
+                 request: Request = None):
+    if db.q1("SELECT id FROM user_groups WHERE code=?", (body.code,)):
+        raise HTTPException(status_code=409, detail="Group code already exists")
+    gid = db.insert("user_groups", {
+        "code": body.code, "name": body.name, "description": body.description,
+        "members": body.members, "tags": body.tags, "enabled": int(body.enabled),
+        "created_by": user["username"], "created_at": db.now()})
+    deps.audit(user["username"], "rbac.group.create", f"group:{body.code}",
+               {"members": body.members}, request=request)
+    return _group_out(db.q1("SELECT * FROM user_groups WHERE id=?", (gid,)))
+
+
+@router.put("/groups/{group_id}", summary="Update a member group")
+def update_group(group_id: int, body: GroupPatch,
+                 user: dict = Depends(deps.require("rbac:write")), request: Request = None):
+    row = db.q1("SELECT * FROM user_groups WHERE id=?", (group_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Group not found")
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "enabled" in patch:
+        patch["enabled"] = int(patch["enabled"])
+    db.update("user_groups", group_id, patch)
+    deps.audit(user["username"], "rbac.group.update", f"group:{row['code']}", patch,
+               request=request)
+    return _group_out(db.q1("SELECT * FROM user_groups WHERE id=?", (group_id,)))
+
+
+@router.delete("/groups/{group_id}", summary="Delete a member group")
+def delete_group(group_id: int, user: dict = Depends(deps.require("rbac:write")),
+                 request: Request = None):
+    row = db.q1("SELECT * FROM user_groups WHERE id=?", (group_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Group not found")
+    db.delete("user_groups", group_id)
+    deps.audit(user["username"], "rbac.group.delete", f"group:{row['code']}", {},
+               request=request)
     return {"ok": True}
 
 

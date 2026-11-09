@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   BookOpen, Bot, ChevronDown, Cpu, ExternalLink, FileText, GitBranch, LayoutDashboard,
   LogOut, Menu, Monitor, Moon, Package, ScrollText, Server, Settings2, ShieldCheck,
-  Sun, UsersRound, X, Languages, Sparkles,
+  Sun, User, UsersRound, X, Languages, Sparkles,
 } from 'lucide-react'
 import { useI18n } from '@/i18n'
 import { useTheme } from '@/theme/ThemeProvider'
@@ -11,6 +11,7 @@ import { useApp } from '@/store/AppContext'
 import { cn } from '@/lib/utils'
 import { Avatar, Badge, Button } from '@/components/ui/basic'
 import { Dropdown, useToast } from '@/components/ui/overlay'
+import { NotificationBell } from './NotificationBell'
 
 export function BrandMark({ className }: { className?: string }) {
   return (
@@ -45,7 +46,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false)
 
   const groups: { key: string; items: NavItem[] }[] = [
-    { key: 'nav.workspace', items: [{ to: '/', icon: <LayoutDashboard className="h-4 w-4" />, key: 'nav.dashboard', perm: 'dashboard:view' }] },
+    { key: 'nav.workspace', items: [
+      { to: '/', icon: <LayoutDashboard className="h-4 w-4" />, key: 'nav.dashboard', perm: 'dashboard:view' },
+      { to: '/profile', icon: <User className="h-4 w-4" />, key: 'nav.profile', perm: '' },
+    ] },
     { key: 'nav.build', items: [
       { to: '/forms', icon: <FileText className="h-4 w-4" />, key: 'nav.forms', perm: 'form:read' },
       { to: '/workflows', icon: <GitBranch className="h-4 w-4" />, key: 'nav.workflows', perm: 'workflow:read' },
@@ -147,6 +151,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             className="hidden items-center gap-1 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:inline-flex">
             API <ExternalLink className="h-3 w-3" />
           </a>
+
+          <NotificationBell />
 
           <Button variant="ghost" size="sm" className="gap-1.5 px-2" title={t('common.language')}
             onClick={() => setLocale(locale === 'en' ? 'zh' : 'en')}>

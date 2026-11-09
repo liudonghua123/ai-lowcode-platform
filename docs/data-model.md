@@ -9,7 +9,7 @@
 | Source of truth | `backend/app/db.py::SCHEMA` |
 | Related | [System Architecture](architecture.md) · [Security Architecture](security.md) · [API & MCP Reference](api-reference.md) · [Domestic Form & Approval](form-flow-domestic.md) · [ADR-0004](adr/0004-sqlite-and-local-bm25.md) · [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md) |
 
-> 中文摘要：平台使用单文件 SQLite（WAL 模式），共 **26 张表、17 个索引**，复杂结构统一以 JSON 文本列存储并由 `insert/update/loads` 透明序列化；连接采用线程局部对象 + 可重入写锁，`init_db()` 内置幂等的 `ALTER TABLE` 惰性迁移。国内表单/审批增强新增 `form_versions`、`workflow_versions`、`flow_tasks`、`flow_delegations`、`org_units` 五张表，并扩展 `forms` / `form_submissions` / `workflows` / `workflow_instances` 的列，详见 [国内表单与审批规范](form-flow-domestic.md)。首次启动自动灌入确定性演示数据。详见 [系统架构设计](architecture.zh-CN.md)。
+> 中文摘要：平台使用单文件 SQLite（WAL 模式），共 **29 张表、20 个索引**，复杂结构统一以 JSON 文本列存储并由 `insert/update/loads` 透明序列化；连接采用线程局部对象 + 可重入写锁，`init_db()` 内置幂等的 `ALTER TABLE` 惰性迁移。国内表单/审批增强新增 `form_versions`、`workflow_versions`、`flow_tasks`、`flow_delegations`、`org_units` 五张表；组/标签与通知新增 `user_groups`、`notifications`、`notify_prefs` 三张表；组/标签与通知新增 `user_groups`、`notifications`、`notify_prefs` 三张表；组/标签与通知新增 `user_groups`、`notifications`、`notify_prefs` 三张表，并扩展 `forms` / `form_submissions` / `workflows` / `workflow_instances` 的列，详见 [国内表单与审批规范](form-flow-domestic.md)。首次启动自动灌入确定性演示数据。详见 [系统架构设计](architecture.zh-CN.md)。
 
 ## 1. Storage strategy
 
@@ -60,7 +60,7 @@ erDiagram
 
 | Table | Key columns | Notes |
 | --- | --- | --- |
-| `users` | `id`, `username` (unique), `email`, `display_name`, `avatar`, `password_hash`, `status`, `dept`, `role_ids` **JSON**, `otp_secret`, `otp_enabled`, `passkey_enabled`, `passkeys` **JSON**, `external_id`, `provider`, `last_login_at`, `created_at`, `updated_at` | Password stored as `pbkdf2_sha256$180000$…`; MFA credentials kept here |
+| `users` | `id`, `username` (unique), `email`, `display_name`, `avatar`, `password_hash`, `status`, `dept`, `tags` **JSON**, `role_ids` **JSON**, `otp_secret`, `otp_enabled`, `passkey_enabled`, `passkeys` **JSON**, `external_id`, `provider`, `last_login_at`, `created_at`, `updated_at` | Password stored as `pbkdf2_sha256$180000$…`; MFA credentials kept here |
 | `roles` | `id`, `code` (unique), `name`, `description`, `permission_ids` **JSON**, `builtin`, `mfa_required`, `created_at` | Built-ins: admin / developer / operator / viewer |
 | `permissions` | `id`, `code` (unique), `name`, `resource`, `action`, `description` | 25 rows |
 | `auth_providers` | `id`, `code` (unique), `type`, `name`, `enabled`, `config` **JSON**, `sort_order`, timestamps | CAS / OAuth2 / OIDC / WeCom / DingTalk |
@@ -84,6 +84,15 @@ erDiagram
 | `workflow_versions` | `id`, `workflow_id`, `version`, `graph` **JSON**, `form_code`, `note`, `created_by`, `created_at` | Graph snapshots pinned by running instances |
 | `flow_tasks` | `id`, `instance_id`, `node_id`, `node_name`, `node_type`, `assignee`, `seq`, `status` (`pending`/`approved`/`rejected`/`skipped`/…), `decision`, `comment`, `signature`, `due_at`, `acted_at`, `created_at`, `delegated_from`, `round` | One row per assignee per node activation; `round` supports re-review after a return |
 | `flow_delegations` | `id`, `principal`, `agent`, `enabled`, `start_at`, `end_at`, `reason`, `created_by`, `created_at` | Principal → agent delegation applied when tasks are created |
+| `user_groups` | `id`, `code` (unique), `name`, `description`, `members` **JSON**, `tags` **JSON**, `enabled`, `created_by`, `created_at` | Free-form member pools for the `groups` approver rule |
+| `notifications` | `id`, `recipient`, `event`, `title`, `body`, `ref_type`, `ref_id`, `read_at`, `created_at` | Per-recipient in-app notification inbox |
+| `notify_prefs` | `id`, `username` (unique), `events` **JSON**, `updated_at` | Per-user event → delivery-channels map |
+| `user_groups` | `id`, `code` (unique), `name`, `description`, `members` **JSON**, `tags` **JSON**, `enabled`, `created_by`, `created_at` | Free-form member pools for the `groups` approver rule |
+| `notifications` | `id`, `recipient`, `event`, `title`, `body`, `ref_type`, `ref_id`, `read_at`, `created_at` | Per-recipient in-app notification inbox |
+| `notify_prefs` | `id`, `username` (unique), `events` **JSON**, `updated_at` | Per-user event → delivery-channels map |
+| `user_groups` | `id`, `code` (unique), `name`, `description`, `members` **JSON**, `tags` **JSON**, `enabled`, `created_by`, `created_at` | Free-form member pools for the `groups` approver rule |
+| `notifications` | `id`, `recipient`, `event`, `title`, `body`, `ref_type`, `ref_id`, `read_at`, `created_at` | Per-recipient in-app notification inbox |
+| `notify_prefs` | `id`, `username` (unique), `events` **JSON**, `updated_at` | Per-user event → delivery-channels map |
 | `org_units` | `id`, `code` (unique), `name`, `parent_code`, `level`, `leader`, `sort_order` | Minimal department hierarchy for `initiator_leader` / `leader_chain` approver rules |
 
 ### 3.4 Knowledge base (2)
@@ -131,6 +140,15 @@ erDiagram
 | `idx_flow_tasks_instance` | `flow_tasks(instance_id, round)` | Instance task + timeline queries |
 | `idx_flow_tasks_assignee` | `flow_tasks(assignee, status)` | Personal task center |
 | `idx_flow_delegations_principal` | `flow_delegations(principal, enabled)` | Active delegation lookup at task creation |
+| `idx_user_groups_code` | `user_groups(code)` | Group lookup by code in approver resolution |
+| `idx_notifications_recipient` | `notifications(recipient, read_at)` | Inbox list and unread counter |
+| `idx_notifications_created` | `notifications(created_at DESC)` | Newest-first inbox ordering |
+| `idx_user_groups_code` | `user_groups(code)` | Group lookup by code in approver resolution |
+| `idx_notifications_recipient` | `notifications(recipient, read_at)` | Inbox list and unread counter |
+| `idx_notifications_created` | `notifications(created_at DESC)` | Newest-first inbox ordering |
+| `idx_user_groups_code` | `user_groups(code)` | Group lookup by code in approver resolution |
+| `idx_notifications_recipient` | `notifications(recipient, read_at)` | Inbox list and unread counter |
+| `idx_notifications_created` | `notifications(created_at DESC)` | Newest-first inbox ordering |
 | `idx_org_units_parent` | `org_units(parent_code)` | Leader-chain traversal |
 | `idx_submissions_serial` | `form_submissions(form_id, serial_no)` | Serial-number uniqueness / lookup |
 

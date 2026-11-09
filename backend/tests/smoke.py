@@ -205,7 +205,7 @@ def main() -> int:
         check("REST tool invoke", c.post("/api/v1/mcp/invoke", headers=h,
             json={"tool": "get_stats", "arguments": {}, "target": "server:platform-builtin"}).status_code == 200)
         tool_catalog = c.get("/api/v1/mcp/tools", headers=h).json()
-        check("tool catalog separates builtin/external", tool_catalog["builtin_tools"] == 20
+        check("tool catalog separates builtin/external", tool_catalog["builtin_tools"] == 24
               and "external_tools" in tool_catalog)
         check("MCP status separates servers and skills", c.get(
             "/api/v1/mcp/status", headers=h).json()["servers"]["total"] >= 3)
@@ -472,7 +472,7 @@ def main() -> int:
         print("\n== Domestic approval runtime ==")
         wmeta = c.get("/api/v1/workflows/meta", headers=h).json()
         check("14 node types incl. parallel/join/cc", len(wmeta["node_types"]) == 14)
-        check("9 approver rules + 4 sign modes", len(wmeta["approver_rules"]) == 9
+        check("11 approver rules + 4 sign modes", len(wmeta["approver_rules"]) == 11
               and len(wmeta["sign_modes"]) == 4)
         check("org units seeded", c.get("/api/v1/meta/health").json()["form_flow"]["org_units"] >= 5)
         ewf = next(w for w in c.get("/api/v1/workflows", headers=h).json()["workflows"]
@@ -536,8 +536,8 @@ def main() -> int:
               any(p["code"] == "data:audit" for p in boot2["rbac"]["permissions"]))
         check("auditor builtin role seeded",
               any(r["code"] == "auditor" for r in boot2["rbac"]["roles"]))
-        check("20 builtin MCP tool specs",
-              boot2["mcp"].get("builtin_tool_count") == 20,
+        check("24 builtin MCP tool specs",
+              boot2["mcp"].get("builtin_tool_count") == 24,
               str(boot2["mcp"].get("builtin_tool_count")))
         hs = c.get("/api/v1/meta/health").json().get("security", {})
         check("health advertises data scopes",
@@ -605,7 +605,7 @@ def main() -> int:
 
         # --- agent self-service intents + schema-driven dynamic form --------
         rt2 = c.get("/api/v1/agents/meta/runtime", headers=h).json()
-        check("20 tool specs in runtime metadata", len(rt2.get("tools", [])) == 20)
+        check("24 tool specs in runtime metadata", len(rt2.get("tools", [])) == 24)
         who = c.post("/api/v1/agents/1/chat", headers=h,
                      json={"message": "我是谁，有哪些权限？"})
         check("identity intent uses scoped tool", who.status_code == 200
@@ -632,6 +632,74 @@ def main() -> int:
         if act.json().get("instance_id"):
             c.post(f"/api/v1/workflows/instances/{act.json()['instance_id']}/withdraw",
                    headers=h, json={})
+
+        # --- groups / tags approver rules + notifications + agent actions --
+        grps = c.get("/api/v1/rbac/groups", headers=h).json()
+        check("member groups seeded", any(g["code"] == "managers" for g in grps.get("groups", []))
+              and any(g["code"] == "finance" for g in grps.get("groups", [])))
+        new_grp = c.post("/api/v1/rbac/groups", headers=h, json={
+            "code": f"smoke_grp_{suffix}", "name": "Smoke Group", "members": ["carol"]})
+        check("create member group", new_grp.status_code == 201, new_grp.text[:120])
+        upd = c.put(f"/api/v1/rbac/groups/{new_grp.json()['id']}", headers=h,
+                    json={"members": ["carol", "diana"]})
+        check("update member group", upd.status_code == 200 and upd.json()["member_count"] == 2)
+        wmeta = c.get("/api/v1/workflows/meta", headers=h).json()
+        rule_codes = [r["code"] for r in wmeta["approver_rules"]]
+        check("groups/tags approver rules exposed", "groups" in rule_codes and "tags" in rule_codes)
+        users_list = c.get("/api/v1/rbac/users", headers=h).json()["users"]
+        alice_row = next(u for u in users_list if u["username"] == "alice")
+        check("user tags stored", "manager" in (alice_row.get("tags") or []))
+        gwf = c.post("/api/v1/workflows", headers=h, json={
+            "code": f"smoke_gwf_{suffix}", "name": "Smoke Group Flow", "status": "published",
+            "graph": {"nodes": [
+                {"id": "n1", "type": "start", "name": "Start", "config": {}},
+                {"id": "n2", "type": "approval", "name": "Group approval",
+                 "config": {"approver_rule": "groups", "groups": [f"smoke_grp_{suffix}"]}},
+                {"id": "n3", "type": "end", "name": "End", "config": {}}],
+                "edges": [{"source": "n1", "target": "n2"}, {"source": "n2", "target": "n3"}]}})
+        check("create groups-rule workflow", gwf.status_code == 201, gwf.text[:160])
+        gid = gwf.json().get("id", 0)
+        ginst = c.post(f"/api/v1/workflows/{gid}/start", headers=h, json={"form_data": {}})
+        check("groups rule resolves members", ginst.status_code == 201, ginst.text[:160])
+        gtasks = c.get(f"/api/v1/workflows/instances/{ginst.json().get('id', 0)}/tasks",
+                       headers=h).json()
+        assignees = {t["assignee"] for t in gtasks.get("tasks", [])}
+        check("group members become approvers", assignees == {"carol", "diana"}, str(assignees))
+        carol_login = c.post("/api/v1/auth/login",
+                             json={"username": "carol", "password": "demo1234"})
+        ch = {"Authorization": f"Bearer {carol_login.json().get('access_token', '')}"}
+        n_before = c.get("/api/v1/notifications/unread-count", headers=ch).json()["unread"]
+        binst = c.post(f"/api/v1/workflows/{gid}/start", headers=bh, json={"form_data": {}})
+        n_after = c.get("/api/v1/notifications/unread-count", headers=ch).json()["unread"]
+        check("task_created notification", binst.status_code == 201
+              and n_after >= n_before + 1)
+        check("notification prefs roundtrip",
+              c.put("/api/v1/notifications/prefs", headers=bh,
+                    json={"events": {"task_result": ["inapp", "webhook"]}}).status_code == 200)
+        prefs = c.get("/api/v1/notifications/prefs", headers=bh).json()
+        check("prefs saved", prefs["events"].get("task_result") == ["inapp", "webhook"])
+        check("channels masked for non-admin",
+              all("config" not in ch for ch in
+                  c.get("/api/v1/notifications/channels", headers=bh).json()["channels"]))
+        ov = c.get("/api/v1/auth/me/overview", headers=bh).json()
+        check("personal overview", ov["instances"]["running"] >= 1
+              and "groups" in ov and ov["tasks"]["done"] >= 1
+              and "delegations" in ov and ov["data_scope"] == "self")
+        approve = c.post("/api/v1/agents/1/chat", headers=h,
+                         json={"message": "同意我的待办"})
+        check("approve intent executes approval", approve.status_code == 200
+              and approve.json().get("provider") == "scoped-tool", approve.text[:160])
+        myn = c.post("/api/v1/agents/1/chat", headers=bh,
+                     json={"message": "查一下我的未读通知"})
+        check("notifications intent uses scoped tool", myn.status_code == 200
+              and myn.json().get("provider") == "scoped-tool")
+        withdr = c.post("/api/v1/agents/1/chat", headers=bh,
+                        json={"message": "撤回我发起的流程"})
+        check("withdraw intent executes", withdr.status_code == 200
+              and withdr.json().get("provider") == "scoped-tool", withdr.text[:160])
+        c.delete(f"/api/v1/workflows/{gid}", headers=h)
+        c.delete(f"/api/v1/rbac/groups/{new_grp.json()['id']}", headers=h)
+        c.post("/api/v1/notifications/read", headers=h, json={"all": True})
 
         print("\n== Cleanup ==")
         check("delete smoke workflow", c.delete(f"/api/v1/workflows/{wid}", headers=h).status_code == 200)

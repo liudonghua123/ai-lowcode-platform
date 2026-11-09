@@ -8,7 +8,7 @@ export interface Role {
 }
 export interface User {
   id: number; username: string; email?: string; display_name?: string; avatar?: string
-  status: string; dept?: string; role_ids: number[]; roles?: string[]
+  status: string; dept?: string; tags?: string[]; role_ids: number[]; roles?: string[]
   permissions: string[]; role_codes: string[]; is_admin: boolean
   is_auditor?: boolean; data_scope?: 'all' | 'audit' | 'self'
   data_scopes?: Record<string, unknown>
@@ -323,6 +323,38 @@ export interface AgentActionResult {
   ok: boolean; kind: string; code: string; answer: string
   instance_id?: number; submission_id?: number; status?: string
   pending?: FlowTask[]; conversation_id?: number; agent?: string
+}
+
+export interface DelegationRow {
+  principal: string; agent: string; starts_at?: string; ends_at?: string
+}
+
+export interface MeOverview {
+  profile: User
+  tasks: { pending: number; done: number }
+  instances: { running: number; total: number }
+  submissions: number
+  notifications_unread: number
+  groups: { code: string; name: string }[]
+  delegations: { outgoing: DelegationRow[]; incoming: DelegationRow[] }
+  data_scope: string
+}
+
+export interface Notification {
+  id: number; recipient: string; event: string; title: string; body?: string
+  ref_type?: string; ref_id?: string; read_at: string | null; created_at: string
+}
+
+export type NotificationPrefs = Record<string, string[]>
+
+export interface NotificationChannelMeta {
+  code: string; en: string; zh: string; editable: boolean
+  ready?: boolean; config?: Record<string, unknown>
+}
+
+export interface UserGroup {
+  id: number; code: string; name: string; description?: string
+  members: string[]; tags: string[]; enabled: boolean; member_count: number
 }
 
 export interface Bootstrap {

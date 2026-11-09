@@ -173,7 +173,7 @@ appends the result to the same conversation. This keeps the same "plan → colle
 
 ### 6.1 Declaration
 
-Each of the 20 tools (12 original + 8 self-service/schema tools) is declared once as `{name, description, inputSchema}` where `inputSchema` is a strict JSON Schema object (`additionalProperties: false`, explicit `required`). `PERMISSION_MAP` binds each tool to an RBAC permission; `HANDLERS` binds it to a pure Python function.
+Each of the 24 tools (12 original + 12 self-service/schema/action tools) is declared once as `{name, description, inputSchema}` where `inputSchema` is a strict JSON Schema object (`additionalProperties: false`, explicit `required`). `PERMISSION_MAP` binds each tool to an RBAC permission; `HANDLERS` binds it to a pure Python function.
 
 | Tool | Required permission | Effect |
 | --- | --- | --- |
@@ -281,7 +281,7 @@ The system prompt is assembled deterministically in `run_agent()`:
 | Method | Result |
 | --- | --- |
 | `initialize` | `protocolVersion` (negotiated), `capabilities{tools,prompts,resources}`, `serverInfo{name,version}`, `instructions` |
-| `tools/list` | 20 tools from `TOOL_SPECS`, plus the `call_remote_tool` bridge |
+| `tools/list` | 24 tools from `TOOL_SPECS`, plus the `call_remote_tool` bridge |
 | `tools/call` | RBAC-checked handler result as MCP content |
 | `resources/list` | `platform://stats`, `platform://forms/{code}`, `platform://workflows/{code}` |
 | `prompts/list` | `analyze_workflow`, `answer_from_kb` |
@@ -355,7 +355,7 @@ The independent Skill registry (`mcp_skills`, served by `/skills`) now carries a
 
 ## 13. Test coverage
 
-`backend/tests/smoke.py` includes dedicated AI assertions: RAG search with mixed zh/en query, document auto-indexing, query agent returning `sources`, act/hybrid agents executing ≥2 real tool calls, tool-result summarization, `tools/list` and `tools/call` over `/mcp`, REST `/mcp/invoke`, third-party skill sync, and RBAC denial for tool calls. Total: **189 passed / 0 failed**. The call journal and skill lifecycle add 63 assertions (recording, statistics, CSV export, clearing, catalog, install, file CRUD, path traversal, enable/disable/uninstall/reinstall).
+`backend/tests/smoke.py` includes dedicated AI assertions: RAG search with mixed zh/en query, document auto-indexing, query agent returning `sources`, act/hybrid agents executing ≥2 real tool calls, tool-result summarization, `tools/list` and `tools/call` over `/mcp`, REST `/mcp/invoke`, third-party skill sync, and RBAC denial for tool calls. Total: **205 passed / 0 failed**. The call journal and skill lifecycle add 63 assertions (recording, statistics, CSV export, clearing, catalog, install, file CRUD, path traversal, enable/disable/uninstall/reinstall).
 
 ## 14. Production upgrade path
 

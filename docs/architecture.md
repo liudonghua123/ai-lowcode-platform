@@ -69,7 +69,7 @@ flowchart LR
         SEC["Security layer<br/>JWT · PBKDF2 · TOTP<br/>WebAuthn · RBAC"]
         HOST["SPA static host<br/>frontend/dist fallback"]
     end
-    DB[(SQLite<br/>WAL · 26 tables)]
+    DB[(SQLite<br/>WAL · 29 tables)]
     FS[("dist/ static assets")]
 
     SPA -->|JSON + Bearer| API
@@ -86,7 +86,7 @@ flowchart LR
 | Container | Responsibility | Technology |
 | --- | --- | --- |
 | SPA | All UI, visual designers, i18n, theming | Vite 6, React 18, TypeScript, Tailwind 3, shadcn/ui-style components, lucide-react |
-| REST layer | 126 OpenAPI paths, Pydantic models, error semantics | FastAPI 0.128+, `APIRouter`, `Depends` |
+| REST layer | 134 OpenAPI paths, Pydantic models, error semantics | FastAPI 0.128+, `APIRouter`, `Depends` |
 | MCP server | MCP `initialize` / `tools/list` / `tools/call` / resources / prompts | `fastmcp` 4.1.6 `http_app(path="/mcp")`, builtin JSON-RPC fallback |
 | Service layer | Pure business logic, no HTTP concerns | Python modules in `app/services/` |
 | Security layer | Identity, tokens, password/MFA, permission checks | stdlib `hashlib`/`hmac`, HS256 JWT, `contextvars` |
@@ -107,7 +107,7 @@ app/
 ├── routers/           auth · rbac · forms · workflows · knowledge · agents · mcp
 │                      mcp_servers · skills · ai_providers · audit · meta
 └── services/
-    ├── mcp_tools.py        ★ capability registry (20 tools, schemas, permissions, agent scoping)
+    ├── mcp_tools.py        ★ capability registry (24 tools, schemas, permissions, agent scoping)
     ├── mcp_servers.py      MCP server registry, probe/sync, external tool bridge
     ├── model_providers.py  6 AI categories, key masking, effective_llm()
     ├── documents.py        stdlib-only multi-format parsing (OOXML/PDF/OCR/text)
@@ -118,6 +118,8 @@ app/
     ├── rag.py              mixed zh/en tokenizer, chunking, BM25, context assembly
     ├── llm.py              3 backends, ReAct orchestration, grounded answers
     ├── data_scope.py       ★ row-level scopes (all/audit/self), owner clauses, row_visible()
+    ├── notify.py           ★ notification hub: inbox + webhook/email channels, never-raise emit()
+    ├── notify.py           ★ notification hub: inbox + webhook/email channels, never-raise emit()
     ├── agent_intents.py    ★ collect/tool/chat planning, schema-driven action requests
     └── sso.py              5 provider adapters, demo mode, identity provisioning
 ```
@@ -141,7 +143,7 @@ main.tsx → HashRouter · ThemeProvider · I18nProvider · ToastProvider · App
 
 `lib/api.ts` wraps `fetch` with JWT injection, `ApiError`, and a global `401 → logout` event. `AppContext` loads `/auth/me` + `/meta/bootstrap` once after login and exposes `can(permission)`.
 
-The shared `components/SchemaForm.tsx` renders the backend `FormField[]` schema in four places — the designer's start dialog, the portal launch dialog, the public share page and the agent's dynamic collection card — and calls `/forms/{id}/evaluate` for visibility / permissions / computed values. `pages/WorkflowPortal.tsx` is the redesigned workflow home (catalog / my-workflows / approvals); `pages/StartWorkflow.tsx` is the public `/#/start/{code}` landing; `App.tsx` registers it as a public route with a `safeNext()` login round trip, and `Workflows.tsx` toggles Portal / Designer views.
+The shared `components/SchemaForm.tsx` renders the backend `FormField[]` schema in four places — the designer's start dialog, the portal launch dialog, the public share page and the agent's dynamic collection card — and calls `/forms/{id}/evaluate` for visibility / permissions / computed values. `pages/WorkflowPortal.tsx` is the redesigned workflow home (catalog / my-workflows / approvals); `pages/StartWorkflow.tsx` is the public `/#/start/{code}` landing; `components/layout/NotificationBell.tsx` polls the unread counter and renders the in-app inbox; `pages/Profile.tsx` is the personal center (profile, password, counters, groups, delegations, notification preferences); `components/layout/NotificationBell.tsx` polls the unread counter and renders the in-app inbox; `pages/Profile.tsx` is the personal center (profile, password, counters, groups, delegations, notification preferences); `App.tsx` registers it as a public route with a `safeNext()` login round trip, and `Workflows.tsx` toggles Portal / Designer views.
 
 ## 7. Key runtime flows
 
@@ -253,13 +255,13 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 
 | Concern | Implementation |
 | --- | --- |
-| i18n | 789 leaf keys per locale, default `en`, `localStorage`, `<html lang>` sync, English fallback |
+| i18n | 824 leaf keys per locale, default `en`, `localStorage`, `<html lang>` sync, English fallback |
 | Theme | `system` (default) / `light` / `dark`, `prefers-color-scheme` listener, HSL CSS variables, `meta[theme-color]` |
 | Audit | Every mutation → `audit_logs(actor, action, resource, detail, ip, level, created_at)` |
 | Configuration | `python-dotenv` → frozen `Settings`; `settings` table for runtime overrides |
 | Errors | `HTTPException` with 401 / 403 / 404 / 422; `ApiError` on the client; 401 triggers global logout |
 | Observability | `/api/v1/meta/health`, `/meta/stats`, `/agents/meta/runtime`, `/agents/meta/bindings`, `/mcp/status`, `/mcp/calls/stats`, `/knowledge/stats` |
-| Testing | `backend/tests/smoke.py` — 189 end-to-end assertions; `pnpm typecheck`, `pnpm build`, `pnpm check:i18n`, `ruff check` |
+| Testing | `backend/tests/smoke.py` — 205 end-to-end assertions; `pnpm typecheck`, `pnpm build`, `pnpm check:i18n`, `ruff check` |
 
 ## 11. Technology decisions (summary)
 
@@ -284,7 +286,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | Security | HS256 JWT, PBKDF2, per-route RBAC, audit | RS256/rotating keys, rate limiting, secret manager |
 | AI accuracy | Deterministic mock + BM25 grounding | Real LLM, vector/embedding store, reranking |
 | Scalability | In-process indexes, synchronous execution | Task queue for workflow runs, external vector DB |
-| Testability | 189 smoke assertions, no network required | Contract tests, load tests, MCP conformance suite |
+| Testability | 205 smoke assertions, no network required | Contract tests, load tests, MCP conformance suite |
 | Operability | Health/stats/runtime endpoints | Structured logging, metrics, tracing |
 
 ## 13. Known limitations
@@ -303,7 +305,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | Domestic forms (FFC-001) | 44-field catalog, statutory validation, AST formulas, versions, print/CSV | `services/form_catalog.py`, `services/form_rules.py`, `routers/forms.py`, `pages/Forms.tsx` |
 | Visual workflow orchestration | DAG validator + engine | `services/workflow_engine.py`, `pages/Workflows.tsx` |
 | Human approval runtime (ADR-0009) | Long-running instances, countersign, parallel/join, task actions, delegation | `services/flow_runtime.py`, `routers/workflows.py`, `pages/Workflows.tsx` |
-| REST API | Versioned routers | `routers/*.py` (161 route decorators → 126 OpenAPI paths) |
+| REST API | Versioned routers | `routers/*.py` (174 route decorators → 134 OpenAPI paths) |
 | MCP transport + tool registry | Dual-transport MCP + single registry | `mcp_server.py`, `routers/mcp.py`, `services/mcp_tools.py` |
 | MCP servers (independent) | CRUD, probe/sync, declared tools, remote invoke | `routers/mcp_servers.py`, `services/mcp_servers.py`, `mcp_servers` |
 | Skills (independent) | Lifecycle, catalog, editable files, `server_id` link | `routers/skills.py`, `services/skill_*.py`, `mcp_skills` |

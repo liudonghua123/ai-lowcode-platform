@@ -12,7 +12,9 @@ def _load_user(user_id: Any) -> dict | None:
     row = db.q1("SELECT * FROM users WHERE id=?", (user_id,))
     if not row or row.get("status") != "active":
         return None
-    user = db.loads(row, "role_ids", "passkeys") or {}
+    user = db.loads(row, "role_ids", "passkeys", "tags") or {}
+    if not isinstance(user.get("tags"), list):
+        user["tags"] = []
     role_ids = user.get("role_ids") or []
     roles = []
     if role_ids:

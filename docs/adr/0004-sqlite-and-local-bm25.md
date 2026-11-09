@@ -13,7 +13,7 @@ Knowledge-grounded agents require document storage and retrieval. The platform m
 
 ## Decision
 
-**Persistence:** use Python's built-in `sqlite3` with a single file, WAL journaling, `foreign_keys=ON`, `busy_timeout=5000`, a thread-local connection and an `RLock` for writes. 26 tables with complex structures (form `schema`, workflow `graph`, document `chunks`, role `permission_ids`, …) stored as JSON TEXT columns, transparently encoded by `db.insert/update/loads`. Seventeen indexes cover the hot query paths. `init_db()` also runs an idempotent `_migrate()` that adds columns introduced after the first release via `PRAGMA table_info` + `ALTER TABLE`, so existing databases upgrade in place.
+**Persistence:** use Python's built-in `sqlite3` with a single file, WAL journaling, `foreign_keys=ON`, `busy_timeout=5000`, a thread-local connection and an `RLock` for writes. 29 tables with complex structures (form `schema`, workflow `graph`, document `chunks`, role `permission_ids`, …) stored as JSON TEXT columns, transparently encoded by `db.insert/update/loads`. Twenty indexes cover the hot query paths. `init_db()` also runs an idempotent `_migrate()` that adds columns introduced after the first release via `PRAGMA table_info` + `ALTER TABLE`, so existing databases upgrade in place.
 
 **Retrieval:** implement BM25 locally in `services/rag.py` — no embedding service.
 
@@ -49,4 +49,4 @@ Knowledge-grounded agents require document storage and retrieval. The platform m
 
 ## Verification
 
-Smoke tests cover document creation with automatic chunking, `reindex`, mixed zh/en `search` hits with assembled context, and knowledge-scoped agent answers with `sources`. `DAT-001` lists all 26 tables and 17 indexes.
+Smoke tests cover document creation with automatic chunking, `reindex`, mixed zh/en `search` hits with assembled context, and knowledge-scoped agent answers with `sources`. `DAT-001` lists all 29 tables and 20 indexes.

@@ -221,6 +221,10 @@ BUILTIN_TOOLS = [
     {"name": "my_instances", "description": "Approval instances I started"},
     {"name": "list_startable_workflows", "description": "Published workflows with a start form"},
     {"name": "get_form_schema", "description": "Rendered schema for a dynamic collection form"},
+    {"name": "act_approval_task", "description": "Act on one of my pending approval tasks"},
+    {"name": "withdraw_instance", "description": "Withdraw one of my running instances"},
+    {"name": "urge_instance", "description": "Urge the current approvers of an instance"},
+    {"name": "my_notifications", "description": "My in-app notifications"},
     {"name": "start_workflow_instance", "description": "Start an approval instance from form data"},
     {"name": "submit_form_data", "description": "Submit collected data to a published form"},
 ]
@@ -345,6 +349,43 @@ def ensure_registries(now: str | None = None) -> dict:
     created["env_refreshed"] = boot["refreshed"]
     created["domestic"] = ensure_domestic_examples(now)
     created["security"] = ensure_security_upgrade(now)
+    created["groups_tags"] = ensure_groups_tags(now)
+    return created
+
+
+def ensure_groups_tags(now: str | None = None) -> dict:
+    """Idempotently provision demo member groups and user tags (ADR-0011).
+
+    Powers the ``groups`` and ``tags`` approver rules; user-owned rows are
+    never overwritten, only missing demo rows are added.
+    """
+    now = now or db.now()
+    created = {"groups": 0, "tagged": 0}
+    demo_groups = [
+        ("managers", "部门主管组 / Manager Group", "Cross-department manager group",
+         ["alice", "bob"], ["manager"]),
+        ("finance", "财务审核组 / Finance Review", "Finance expense reviewers",
+         ["carol", "admin"], ["finance"]),
+        ("frontdesk", "前台行政组 / Front Office", "Admin & front desk staff",
+         ["carol"], ["admin"]),
+    ]
+    for code, name, desc, members, tags in demo_groups:
+        if not db.q1("SELECT id FROM user_groups WHERE code=?", (code,)):
+            db.insert("user_groups", {"code": code, "name": name, "description": desc,
+                                      "members": members, "tags": tags, "enabled": 1,
+                                      "created_by": "admin", "created_at": now})
+            created["groups"] += 1
+    demo_tags = {"alice": ["manager", "vip"], "bob": ["sales", "manager"],
+                 "carol": ["finance", "hr"], "diana": ["audit"]}
+    for username, tags in demo_tags.items():
+        row = db.q1("SELECT id, tags FROM users WHERE username=?", (username,))
+        if not row:
+            continue
+        current = db.loads(row, "tags") or {}
+        if current.get("tags"):
+            continue
+        db.update("users", row["id"], {"tags": tags, "updated_at": now})
+        created["tagged"] += 1
     return created
 
 
