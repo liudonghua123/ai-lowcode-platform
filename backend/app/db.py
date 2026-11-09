@@ -197,7 +197,8 @@ CREATE TABLE IF NOT EXISTS mcp_skills (
   manifest TEXT NOT NULL DEFAULT '{}',
   installed_at TEXT,
   updated_at TEXT,
-  server_id INTEGER
+  server_id INTEGER,
+  hub_id INTEGER
 );
 CREATE TABLE IF NOT EXISTS mcp_servers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -386,6 +387,25 @@ CREATE TABLE IF NOT EXISTS notify_prefs (
   updated_at TEXT NOT NULL
 );
 
+-- Skill Hubs: remote / builtin registries that skills can be discovered from.
+CREATE TABLE IF NOT EXISTS skill_hubs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  url TEXT,
+  kind TEXT NOT NULL DEFAULT 'builtin',
+  auth_config TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  sync_interval_min INTEGER NOT NULL DEFAULT 60,
+  last_sync_at TEXT,
+  last_error TEXT,
+  skill_count INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 -- Minimal organization graph for leader-chain and department approver rules.
 CREATE TABLE IF NOT EXISTS org_units (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -422,6 +442,7 @@ CREATE INDEX IF NOT EXISTS idx_submissions_serial ON form_submissions(form_id, s
 CREATE INDEX IF NOT EXISTS idx_user_groups_code ON user_groups(code);
 CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient, read_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_skill_hubs_enabled ON skill_hubs(enabled, kind);
 """
 
 # Columns added after the first release. SQLite cannot add them through
@@ -458,6 +479,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "installed_at": "TEXT",
         "updated_at": "TEXT",
         "server_id": "INTEGER",
+        "hub_id": "INTEGER",
     },
     "kb_documents": {
         "file_name": "TEXT",

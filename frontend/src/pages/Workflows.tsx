@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  ArrowRightLeft, Bell, BookOpen, Bot, CheckCircle2, CircleDot, Clock, FileText,
-  GitBranch, Globe2, History, LayoutGrid, Layers, Link2, ListTodo, Minus, Network,
-  Play, Plus, RefreshCw, Save, Settings2, ShieldCheck, Sparkles, Square, Timer,
-  Trash2, Undo2, UserCheck, UserPlus, UsersRound, X, ZoomIn, ZoomOut, Send,
+  ArrowRightLeft, Bell, BookOpen, Bot, CheckCircle2, CircleDot, Clock, FileText, GitBranch, Globe2, History, LayoutGrid, Layers, Link2, ListTodo, Minus, Network, Play, Plus, RefreshCw, Save, Settings2, ShieldCheck, Sparkles, Square, Timer, Trash2, Undo2, UserCheck, UserPlus, UsersRound, X, ZoomIn, ZoomOut, Send, Zap, Equal, Code2, Database, Search, Tags, Package, Webhook, BellRing, FilePenLine,
 } from 'lucide-react'
 import { PageHeader, SectionTitle } from '@/components/PageHeader'
 import {
@@ -18,12 +15,16 @@ import { del, get, post, put } from '@/lib/api'
 import { cn, formatDate, safeParse, uid } from '@/lib/utils'
 import { SchemaForm } from '@/components/SchemaForm'
 import WorkflowPortal from '@/pages/WorkflowPortal'
-import type {
+import type { ConfigField,
   FlowMeta, FlowTask, FormDef, StartSchema, WfEdge, WfGraph, WfNode,
   WorkflowDef, WorkflowInstance, WorkflowVersion,
 } from '@/types'
 
 const NODE_ICONS: Record<string, typeof Play> = {
+  trigger: Zap, assign: Equal, script: Code2, data_write: Database,
+  db_query: Search, ai_classify: Tags, skill: Package, webhook: Webhook,
+  message: BellRing, human_input: FilePenLine,
+
   start: Play, end: Square, form: FileText, condition: GitBranch, approval: ShieldCheck,
   ai: Sparkles, knowledge: BookOpen, http: Globe2, notification: Bell,
   cc: UsersRound, parallel: Network, join: Layers, delay: Clock, subflow: GitBranch,
@@ -467,6 +468,7 @@ export default function Workflows() {
             ]} />
             {rightTab === 'properties' && (
               active ? <NodeProperties node={active} operators={operators} meta={flowMeta} forms={forms}
+                  schema={(typeOf(active.type) as any)?.config_schema || []}
                   patch={patchNode} patchConfig={patchConfig} remove={removeNode} /> :
               activeE ? <EdgeProperties edge={activeE} onChange={(p) => setEdges((prev) => prev.map((e) => e.id === activeE.id ? { ...e, ...p } : e))}
                 onDelete={() => { setEdges((p) => p.filter((e) => e.id !== activeE.id)); setActiveEdge(null) }} /> :
@@ -728,41 +730,81 @@ function defaultConfig(type: string): Record<string, unknown> {
   } as Record<string, Record<string, unknown>>)[type] || {}
 }
 
-function NodeProperties({ node, operators, patch, patchConfig, remove, meta, forms }: {
+function NodeProperties({ node, operators, patch, patchConfig, remove, meta, forms, schema }: {
   node: WfNode; operators: string[]; meta: FlowMeta | null; forms: FormDef[]
+  schema: ConfigField[]
   patch: (id: string, p: Partial<WfNode>) => void
   patchConfig: (k: string, v: any) => void; remove: (id: string) => void
 }) {
   const { t } = useI18n()
   const Icon = NODE_ICONS[node.type] || CircleDot
   const cfg: any = node.config || {}
-  const rules = meta?.approver_rules || [
-    { code: 'users', label: 'Designated members' }, { code: 'roles', label: 'Role members' },
-    { code: 'departments', label: 'Department members' }, { code: 'initiator', label: 'Initiator' },
-    { code: 'initiator_leader', label: 'Department leader' },
-    { code: 'leader_chain', label: 'Leader chain' },
-    { code: 'form_field', label: 'Form field' }, { code: 'previous', label: 'Previous approver' },
-    { code: 'self_select', label: 'Initiator selects' },
-    { code: 'groups', label: 'Member group' }, { code: 'tags', label: 'Users by tag' },
-  ]
-  const signModes = meta?.sign_modes || [
-    { code: 'any', label: 'Or-sign' }, { code: 'all', label: 'Countersign' },
-    { code: 'ratio', label: 'Ratio' }, { code: 'sequence', label: 'Sequential' },
-  ]
-  const emptyPolicies = meta?.empty_policies || [
-    { code: 'skip', label: 'Skip' }, { code: 'admin', label: 'Fallback admin' },
-    { code: 'auto_approve', label: 'Auto approve' }, { code: 'fail', label: 'Fail' },
-  ]
-  const timeoutActions = meta?.timeout_actions || [
-    { code: 'remind', label: 'Remind' }, { code: 'auto_approve', label: 'Auto approve' },
-    { code: 'auto_reject', label: 'Auto reject' }, { code: 'transfer_admin', label: 'Transfer admin' },
-  ]
-  const csv = (v: any) => Array.isArray(v) ? v.join(', ') : (v || '')
-  const setList = (k: string, v: string) => patchConfig(k,
-    v.split(',').map((x) => x.trim()).filter(Boolean))
-  const toggle = (k: string) => <div className="flex items-center justify-between rounded-lg border px-2.5 py-1.5">
-    <span className="text-[11px] font-medium">{t(`workflows.cfg.${k}`)}</span>
-    <Switch checked={!!cfg[k]} onCheckedChange={(v) => patchConfig(k, v)} /></div>
+  const csv = (v: any) => Array.isArray(v) ? v.join(', ') : (v ?? '')
+  const labelOf = (f: ConfigField) => {
+    const key = `workflows.cfg.${f.key}`
+    const translated = t(key)
+    return translated === key ? (f.label || f.key) : translated
+  }
+  const jsonValue = (f: ConfigField) => {
+    const v = cfg[f.key] ?? f.default
+    if (v === undefined || v === null || v === '') return ''
+    return typeof v === 'string' ? v : JSON.stringify(v, null, 2)
+  }
+  const optionsFor = (f: ConfigField) => {
+    if (f.key === 'approver_rule' && meta?.approver_rules?.length)
+      return meta.approver_rules.map((r) => ({ value: r.code, label: r.label }))
+    if (f.key === 'sign_mode' && meta?.sign_modes?.length)
+      return meta.sign_modes.map((r) => ({ value: r.code, label: r.label }))
+    if (f.key === 'empty_policy' && meta?.empty_policies?.length)
+      return meta.empty_policies.map((r) => ({ value: r.code, label: r.label }))
+    if (f.key === 'timeout_action' && meta?.timeout_actions?.length)
+      return meta.timeout_actions.map((r) => ({ value: r.code, label: r.label }))
+    if (f.key === 'operator') return operators.map((o) => ({ value: o, label: o }))
+    return (f.options || []).map((o) => ({ value: String(o), label: String(o) }))
+  }
+
+  const renderField = (f: ConfigField) => {
+    const value = cfg[f.key] ?? f.default ?? ''
+    switch (f.type) {
+      case 'boolean':
+        return <div key={f.key} className="flex items-center justify-between rounded-lg border px-2.5 py-1.5">
+          <span className="text-[11px] font-medium">{labelOf(f)}</span>
+          <Switch checked={!!value} onCheckedChange={(v) => patchConfig(f.key, v)} /></div>
+      case 'select':
+        return <Field key={f.key} label={labelOf(f)} hint={f.help}>
+          <Select value={String(value || '')} onValueChange={(v) => patchConfig(f.key, v)}
+            options={[{ value: '', label: t('common.none') }, ...optionsFor(f)]} /></Field>
+      case 'number':
+        return <Field key={f.key} label={labelOf(f)} hint={f.help}>
+          <Input type="number" value={value as any} placeholder={f.placeholder}
+            onChange={(e) => patchConfig(f.key, e.target.value === '' ? '' : Number(e.target.value))} /></Field>
+      case 'textarea':
+      case 'code':
+        return <Field key={f.key} label={labelOf(f)} hint={f.help}>
+          <Textarea rows={f.type === 'code' ? 4 : 3}
+            className={f.type === 'code' ? 'font-mono text-[10px]' : ''}
+            value={String(value ?? '')} placeholder={f.placeholder}
+            onChange={(e) => patchConfig(f.key, e.target.value)} /></Field>
+      case 'json':
+        return <Field key={f.key} label={labelOf(f)} hint={f.help || 'JSON'}>
+          <Textarea rows={3} className="font-mono text-[10px]" value={jsonValue(f)}
+            onChange={(e) => { try { patchConfig(f.key, e.target.value.trim()
+              ? JSON.parse(e.target.value) : {}) } catch { /* keep typing */ } }} /></Field>
+      case 'list':
+        return <Field key={f.key} label={labelOf(f)} hint={f.help || 'comma separated'}>
+          <Input value={csv(value)} placeholder={f.placeholder}
+            onChange={(e) => patchConfig(f.key, e.target.value.split(',').map((x) => x.trim()).filter(Boolean))} /></Field>
+      case 'form':
+        return <Field key={f.key} label={labelOf(f)} hint={f.help}>
+          <Select value={String(value || '')} onValueChange={(v) => patchConfig(f.key, v)}
+            options={[{ value: '', label: t('common.none') },
+              ...forms.map((x) => ({ value: x.code, label: `${x.name} · ${x.code}` }))]} /></Field>
+      default:
+        return <Field key={f.key} label={labelOf(f)} hint={f.help}>
+          <Input value={String(value ?? '')} placeholder={f.placeholder}
+            onChange={(e) => patchConfig(f.key, e.target.value)} /></Field>
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -772,124 +814,14 @@ function NodeProperties({ node, operators, patch, patchConfig, remove, meta, for
       </div>
       <Field label={t('workflows.nodeName')}>
         <Input value={node.name} onChange={(e) => patch(node.id, { name: e.target.value })} /></Field>
-
-      {['start', 'form', 'subflow'].includes(node.type) && <Field label={t('workflows.formCode')}>
-        {node.type === 'subflow' ? (
-          <Input value={cfg.workflow_code || ''} placeholder="workflow code"
-            onChange={(e) => patchConfig('workflow_code', e.target.value)} />
-        ) : (
-          <Select value={cfg.form_code || ''} onValueChange={(v) => patchConfig('form_code', v)}
-            options={[{ value: '', label: t('common.none') },
-              ...forms.map((f) => ({ value: f.code, label: `${f.name} · ${f.code}` }))]} />
-        )}
-      </Field>}
-      {node.type === 'form' && <Field label={t('workflows.assignee')}>
-        <Input value={cfg.assignee || ''} onChange={(e) => patchConfig('assignee', e.target.value)} /></Field>}
-
-      {['approval', 'cc'].includes(node.type) && <>
-        <Field label={t('workflows.cfg.approver_rule')}>
-          <Select value={cfg.approver_rule || 'roles'}
-            onValueChange={(v) => patchConfig('approver_rule', v)}
-            options={rules.map((r) => ({ value: r.code, label: r.label }))} /></Field>
-        {['users', 'roles', 'departments', 'cc'].includes(cfg.approver_rule || '') &&
-          <Field label={t('workflows.assignees')} hint="comma separated">
-            <Input value={csv(cfg.assignees || cfg.roles || cfg.departments)}
-              placeholder="admin, alice"
-              onChange={(e) => setList(cfg.approver_rule === 'roles' ? 'roles'
-                : cfg.approver_rule === 'departments' ? 'departments' : 'assignees', e.target.value)} /></Field>}
-        {['initiator_leader', 'leader_chain'].includes(cfg.approver_rule || '') &&
-          <Field label={t('workflows.cfg.leader_level')}>
-            <Input type="number" min={1} max={5} value={cfg.leader_level ?? 1}
-              onChange={(e) => patchConfig('leader_level', Number(e.target.value))} /></Field>}
-        {cfg.approver_rule === 'form_field' && <Field label={t('workflows.cfg.form_field')}>
-          <Input value={cfg.form_field || ''} onChange={(e) => patchConfig('form_field', e.target.value)} /></Field>}
-        {cfg.approver_rule === 'groups' && <Field label={t('workflows.cfg.groups')} hint="managers, finance">
-          <Input value={csv(cfg.groups || cfg.assignees)} placeholder="managers, finance"
-            onChange={(e) => setList('groups', e.target.value)} /></Field>}
-        {cfg.approver_rule === 'tags' && <Field label={t('workflows.cfg.tags')} hint="manager, vip">
-          <Input value={csv(cfg.tags || cfg.assignees)} placeholder="manager, vip"
-            onChange={(e) => setList('tags', e.target.value)} /></Field>}
-      </>}
-
-      {node.type === 'approval' && <>
-        <Field label={t('workflows.cfg.sign_mode')}>
-          <Select value={cfg.sign_mode || cfg.mode || 'any'}
-            onValueChange={(v) => { patchConfig('sign_mode', v); patchConfig('mode', v) }}
-            options={signModes.map((m) => ({ value: m.code, label: m.label }))} /></Field>
-        {(cfg.sign_mode || cfg.mode) === 'ratio' && <Field label={t('workflows.cfg.ratio')}>
-          <Input type="number" step="0.1" min="0" max="1" value={cfg.ratio ?? 0.5}
-            onChange={(e) => patchConfig('ratio', Number(e.target.value))} /></Field>}
-        <div className="grid grid-cols-2 gap-2">
-          <Field label={t('workflows.cfg.empty_policy')}>
-            <Select value={cfg.empty_policy || 'skip'} onValueChange={(v) => patchConfig('empty_policy', v)}
-              options={emptyPolicies.map((x) => ({ value: x.code, label: x.label }))} /></Field>
-          <Field label={t('workflows.cfg.timeout_action')}>
-            <Select value={cfg.timeout_action || 'remind'} onValueChange={(v) => patchConfig('timeout_action', v)}
-              options={timeoutActions.map((x) => ({ value: x.code, label: x.label }))} /></Field>
-        </div>
-        <Field label={t('workflows.cfg.timeout_hours')}>
-          <Input type="number" min={1} value={cfg.timeout_hours ?? 24}
-            onChange={(e) => patchConfig('timeout_hours', Number(e.target.value))} /></Field>
-        <Field label={t('workflows.cfg.reject_policy')}>
-          <Select value={cfg.reject_policy || 'terminate'} onValueChange={(v) => patchConfig('reject_policy', v)}
-            options={[{ value: 'terminate', label: 'Terminate' }, { value: 'return', label: 'Return to initiator' }]} />
-        </Field>
-        {toggle('exclude_initiator')}
-        {toggle('comment_required')}
-        {toggle('signature_required')}
-        {toggle('allow_return')}
-        {toggle('allow_transfer')}
-        {toggle('allow_addsign')}
-        <Field label={t('workflows.cfg.field_permissions')} hint='JSON: {"field_key":"readonly"}'>
-          <Textarea rows={3} className="font-mono text-[10px]"
-            value={JSON.stringify(cfg.field_permissions || {})}
-            onChange={(e) => { try { patchConfig('field_permissions', JSON.parse(e.target.value)) }
-              catch { /* keep typing */ } }} /></Field>
-      </>}
-
-      {node.type === 'condition' && <>
-        <Field label={t('workflows.cfg.logic')}>
-          <Select value={cfg.logic || 'and'} onValueChange={(v) => patchConfig('logic', v)}
-            options={[{ value: 'and', label: 'AND' }, { value: 'or', label: 'OR' }]} /></Field>
-        <Field label={t('workflows.cfg.conditions')} hint='JSON: [{"field":"amount","operator":"gt","value":5000}]'>
-          <Textarea rows={4} className="font-mono text-[10px]"
-            value={JSON.stringify(cfg.conditions || [])}
-            onChange={(e) => { try { patchConfig('conditions', JSON.parse(e.target.value)) }
-              catch { /* keep typing */ } }} /></Field>
-        <Field label={t('workflows.conditionField')}>
-          <Input value={cfg.field || ''} onChange={(e) => patchConfig('field', e.target.value)} /></Field>
-        <Field label={t('workflows.operator')}>
-          <Select value={cfg.operator || 'gt'} onValueChange={(v) => patchConfig('operator', v)}
-            options={operators.map((o) => ({ value: o, label: o }))} /></Field>
-        <Field label={t('workflows.conditionValue')}>
-          <Input value={String(cfg.value ?? '')}
-            onChange={(e) => patchConfig('value', isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value))} />
-        </Field>
-      </>}
-
-      {node.type === 'join' && <Field label={t('workflows.cfg.join_mode')}>
-        <Select value={cfg.join_mode || 'all'} onValueChange={(v) => patchConfig('join_mode', v)}
-          options={[{ value: 'all', label: 'All branches' }, { value: 'any', label: 'Any branch' }]} /></Field>}
-      {node.type === 'delay' && <Field label={t('workflows.cfg.delay_hours')}>
-        <Input type="number" min={0} value={cfg.delay_hours ?? 1}
-          onChange={(e) => patchConfig('delay_hours', Number(e.target.value))} /></Field>}
-      {node.type === 'ai' && <Field label={t('workflows.prompt')}>
-        <Textarea rows={3} value={cfg.prompt || ''} onChange={(e) => patchConfig('prompt', e.target.value)} /></Field>}
-      {node.type === 'knowledge' && <Field label={t('workflows.query')}>
-        <Input value={cfg.query || ''} onChange={(e) => patchConfig('query', e.target.value)} /></Field>}
-      {node.type === 'http' && <>
-        <Field label={t('workflows.method')}>
-          <Select value={cfg.method || 'POST'} onValueChange={(v) => patchConfig('method', v)}
-            options={['GET', 'POST', 'PUT', 'DELETE'].map((m) => ({ value: m, label: m }))} /></Field>
-        <Field label={t('workflows.url')}>
-          <Input value={cfg.url || ''} onChange={(e) => patchConfig('url', e.target.value)} /></Field>
-      </>}
-      {node.type === 'notification' && <>
-        <Field label={t('workflows.channel')}>
-          <Input value={cfg.channel || ''} onChange={(e) => patchConfig('channel', e.target.value)} /></Field>
-        <Field label={t('workflows.template')}>
-          <Input value={cfg.template || ''} onChange={(e) => patchConfig('template', e.target.value)} /></Field>
-      </>}
+      {schema.length > 0 ? (
+        <>
+          <p className="text-[10px] text-muted-foreground">{t('registry.propertyHint')}</p>
+          {schema.map(renderField)}
+        </>
+      ) : (
+        <p className="py-4 text-center text-[11px] text-muted-foreground">{t('registry.none')}</p>
+      )}
       <Button variant="outline" size="sm" className="w-full" onClick={() => remove(node.id)}>
         <Trash2 className="h-3.5 w-3.5 text-destructive" />{t('workflows.deleteNode')}</Button>
     </div>

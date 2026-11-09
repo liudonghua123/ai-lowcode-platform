@@ -205,7 +205,7 @@ def main() -> int:
         check("REST tool invoke", c.post("/api/v1/mcp/invoke", headers=h,
             json={"tool": "get_stats", "arguments": {}, "target": "server:platform-builtin"}).status_code == 200)
         tool_catalog = c.get("/api/v1/mcp/tools", headers=h).json()
-        check("tool catalog separates builtin/external", tool_catalog["builtin_tools"] == 24
+        check("tool catalog separates builtin/external", tool_catalog["builtin_tools"] >= 55
               and "external_tools" in tool_catalog)
         check("MCP status separates servers and skills", c.get(
             "/api/v1/mcp/status", headers=h).json()["servers"]["total"] >= 3)
@@ -406,8 +406,8 @@ def main() -> int:
 
         print("\n== Domestic form features (CN scenarios) ==")
         fmeta = c.get("/api/v1/forms/meta", headers=h).json()
-        check("44 form field types in 5 groups", fmeta["field_count"] == 44
-              and len(fmeta["groups"]) == 5)
+        check("66 form field types in 6 groups", fmeta["field_count"] == 66
+              and len(fmeta["groups"]) == 6)
         check("validators include statutory CN rules", {"idcard", "mobile", "uscc", "bankcard"}
               <= {v["code"] for v in fmeta["validators"]})
         check("formula functions include CNY_UPPER + TABLE_SUM", {"CNY_UPPER", "TABLE_SUM"}
@@ -471,7 +471,7 @@ def main() -> int:
 
         print("\n== Domestic approval runtime ==")
         wmeta = c.get("/api/v1/workflows/meta", headers=h).json()
-        check("14 node types incl. parallel/join/cc", len(wmeta["node_types"]) == 14)
+        check("24 node types incl. parallel/join/cc", len(wmeta["node_types"]) == 24)
         check("11 approver rules + 4 sign modes", len(wmeta["approver_rules"]) == 11
               and len(wmeta["sign_modes"]) == 4)
         check("org units seeded", c.get("/api/v1/meta/health").json()["form_flow"]["org_units"] >= 5)
@@ -536,8 +536,8 @@ def main() -> int:
               any(p["code"] == "data:audit" for p in boot2["rbac"]["permissions"]))
         check("auditor builtin role seeded",
               any(r["code"] == "auditor" for r in boot2["rbac"]["roles"]))
-        check("24 builtin MCP tool specs",
-              boot2["mcp"].get("builtin_tool_count") == 24,
+        check("55+ builtin MCP tool specs",
+              boot2["mcp"].get("builtin_tool_count") >= 55,
               str(boot2["mcp"].get("builtin_tool_count")))
         hs = c.get("/api/v1/meta/health").json().get("security", {})
         check("health advertises data scopes",
@@ -605,7 +605,7 @@ def main() -> int:
 
         # --- agent self-service intents + schema-driven dynamic form --------
         rt2 = c.get("/api/v1/agents/meta/runtime", headers=h).json()
-        check("24 tool specs in runtime metadata", len(rt2.get("tools", [])) == 24)
+        check("55+ tool specs in runtime metadata", len(rt2.get("tools", [])) >= 55)
         who = c.post("/api/v1/agents/1/chat", headers=h,
                      json={"message": "我是谁，有哪些权限？"})
         check("identity intent uses scoped tool", who.status_code == 200
@@ -700,6 +700,223 @@ def main() -> int:
         c.delete(f"/api/v1/workflows/{gid}", headers=h)
         c.delete(f"/api/v1/rbac/groups/{new_grp.json()['id']}", headers=h)
         c.post("/api/v1/notifications/read", headers=h, json={"all": True})
+
+        print("\n== v5: declarative registry / full agent coverage / skill hubs ==")
+        reg5 = c.get("/api/v1/meta/registry", headers=h).json()
+        check("registry exposes 66 form components", reg5["component_count"] == 66)
+        check("registry exposes 24 workflow nodes", reg5["node_count"] == 24)
+        check("every component carries a config schema",
+              all("config_schema" in x for x in reg5["components"]))
+        check("every node carries a config schema",
+              all("config_schema" in x for x in reg5["nodes"]))
+        check("nodes span 6 capability categories", len(reg5["node_categories"]) >= 6,
+              str(reg5["node_categories"]))
+        check("human node types include human_input",
+              {"approval", "cc", "human_input"} <= set(reg5["human_nodes"]))
+        check("registry serves Chinese labels",
+              c.get("/api/v1/meta/registry?lang=zh", headers=h).status_code == 200)
+        check("bootstrap embeds registry", "registry" in c.get(
+            "/api/v1/meta/bootstrap", headers=h).json())
+        check("form meta exposes config schemas",
+              "config_schemas" in c.get("/api/v1/forms/meta", headers=h).json())
+        check("workflow meta exposes 24 node specs", len(c.get(
+            "/api/v1/workflows/meta", headers=h).json()["node_specs"]) == 24)
+        h5 = c.get("/api/v1/meta/health").json()
+        check("health advertises 66 fields / 24 nodes / 3 hubs",
+              h5["form_flow"]["form_field_types"] == 66
+              and h5["form_flow"]["workflow_node_types"] == 24
+              and h5["hubs"]["configured"] >= 3)
+
+        # --- runtime-extensible custom component / node types ----------------
+        ccode, ncode = f"smoke_widget_{suffix}", f"smoke_node_{suffix}"
+        cr5 = c.post("/api/v1/meta/registry/components", headers=h,
+                     json={"spec": {"code": ccode, "name": "Smoke Widget", "group": "advanced"}})
+        check("register custom component at runtime", cr5.status_code == 201, cr5.text[:160])
+        check("custom component appears in registry", any(
+            x.get("code") == ccode for x in c.get(
+                "/api/v1/meta/registry", headers=h).json()["custom"]["components"]))
+        check("custom component appears in form catalog", ccode in {
+            f.get("type") for f in c.get("/api/v1/forms/meta", headers=h).json()["fields"]})
+        cf5 = c.post("/api/v1/forms", headers=h, json={
+            "code": f"smoke_cform_{suffix}", "name": "Custom widget form", "status": "draft",
+            "schema": [{"id": "c1", "key": "widget", "type": ccode, "label": "Widget"}]})
+        check("custom component passes form validation", cf5.status_code == 201, cf5.text[:160])
+        nr5 = c.post("/api/v1/meta/registry/nodes", headers=h,
+                     json={"spec": {"type": ncode, "name": "Smoke Node", "category": "task"}})
+        check("register custom node at runtime", nr5.status_code == 201, nr5.text[:160])
+        check("custom node appears in workflow palette", ncode in {
+            n["type"] for n in c.get("/api/v1/workflows/meta", headers=h).json()["node_types"]})
+        check("invalid custom type code rejected", c.post(
+            "/api/v1/meta/registry/components", headers=h,
+            json={"spec": {"code": "bad code!", "name": "x"}}).status_code == 400)
+        check("custom types counted in health", c.get(
+            "/api/v1/meta/health").json()["form_flow"]["custom_components"] >= 1)
+
+        # --- all new automatic node executors in one synchronous run ---------
+        ng5 = {"nodes": [
+            {"id": "a1", "type": "start", "name": "Start", "x": 0, "y": 0, "config": {}},
+            {"id": "a2", "type": "assign", "name": "Assign", "x": 90, "y": 0,
+             "config": {"assignments": [{"key": "owner", "value": "admin"}]}},
+            {"id": "a3", "type": "script", "name": "Script", "x": 180, "y": 0,
+             "config": {"code": "amount * 2", "output_key": "total"}},
+            {"id": "a4", "type": "data_write", "name": "Write", "x": 270, "y": 0,
+             "config": {"target": "context", "mapping": {"flag": True}}},
+            {"id": "a5", "type": "db_query", "name": "Query", "x": 360, "y": 0,
+             "config": {"sql": "SELECT COUNT(*) AS n FROM forms"}},
+            {"id": "a6", "type": "ai_classify", "name": "Classify", "x": 450, "y": 0,
+             "config": {"field": "query", "categories": ["sales", "hr"]}},
+            {"id": "a7", "type": "webhook", "name": "Webhook", "x": 540, "y": 0,
+             "config": {"url": "https://example.invalid/hook"}},
+            {"id": "a8", "type": "message", "name": "Message", "x": 630, "y": 0,
+             "config": {"title": "hi", "template": "hello"}},
+            {"id": "a9", "type": "skill", "name": "Skill", "x": 720, "y": 0,
+             "config": {"skill_code": "platform-builtin", "tool": "get_stats"}},
+            {"id": "a10", "type": "end", "name": "End", "x": 810, "y": 0, "config": {}}],
+            "edges": [{"id": f"ve{i}", "source": f"a{i}", "target": f"a{i + 1}"}
+                      for i in range(1, 10)]}
+        nwf5 = c.post("/api/v1/workflows", headers=h, json={
+            "code": f"smoke_nodes_{suffix}", "name": "New node executors", "status": "draft",
+            "graph": ng5})
+        check("create workflow with 8 new node types", nwf5.status_code == 201, nwf5.text[:200])
+        nwid5 = nwf5.json().get("id", 0)
+        nrun5 = c.post(f"/api/v1/workflows/{nwid5}/run", headers=h,
+                       json={"context": {"amount": 3, "query": "sales report"}})
+        check("new node executors run end-to-end", nrun5.status_code == 201
+              and nrun5.json()["status"] == "completed", nrun5.text[:200])
+        logged5 = {e.get("node") for e in nrun5.json().get("logs", [])}
+        check("all 8 new nodes produced execution logs",
+              {f"a{i}" for i in range(2, 10)} <= logged5, str(sorted(logged5)))
+        check("script node evaluated workflow context",
+              nrun5.json().get("context", {}).get("total") == 6,
+              str(nrun5.json().get("context", {}).get("total")))
+        check("ai_classify node wrote a classification",
+              nrun5.json().get("context", {}).get("classification") == "sales")
+
+        # --- permission-driven full agent capability coverage ----------------
+        rt5 = c.get("/api/v1/agents/meta/runtime", headers=h).json()
+        caps5 = rt5["capabilities"]
+        check("runtime exposes 55+ tools", len(rt5["tools"]) >= 55)
+        check("capability matrix covers all tools", caps5["total_tools"] >= 55
+              and caps5["permission_driven"])
+        check("admin has every tool available",
+              caps5["available_tools"] == caps5["total_tools"],
+              f"{caps5['available_tools']}/{caps5['total_tools']}")
+        check("capability domains cover system areas",
+              {"mcp", "skill", "settings", "rbac", "audit", "knowledge",
+               "form", "workflow"} <= set(caps5["domains"]), str(sorted(caps5["domains"])))
+        bob5 = c.post("/api/v1/auth/login", json={"username": "bob", "password": "demo1234"})
+        bh5 = {"Authorization": f"Bearer {bob5.json()['access_token']}"}
+        rt5b = c.get("/api/v1/agents/meta/runtime", headers=bh5).json()
+        check("operator sees fewer visible tools than admin",
+              0 < len(rt5b["tools"]) < len(rt5["tools"]),
+              f"{len(rt5b['tools'])}/{len(rt5['tools'])}")
+        check("operator capability matrix hides tools",
+              rt5b["capabilities"]["available_tools"]
+              < rt5b["capabilities"]["total_tools"])
+        check("REST MCP tool list is permission filtered",
+              c.get("/api/v1/mcp/tools", headers=bh5).json()["total"]
+              < c.get("/api/v1/mcp/tools", headers=h).json()["total"])
+        cap_inv5 = c.post("/api/v1/mcp/invoke", headers=h, json={
+            "tool": "my_capabilities", "arguments": {},
+            "target": "server:platform-builtin"}).json()
+        check("my_capabilities groups by permission domain",
+              len((cap_inv5.get("result") or {}).get("capability_groups") or {}) >= 8)
+        for msg5, tool5 in (("我能做什么", "my_capabilities"),
+                            ("搜索技能 pdf", "search_skill_hub"),
+                            ("列出技能库", "list_skill_hubs"),
+                            ("组件目录", "list_registry")):
+            r5 = c.post("/api/v1/agents/1/chat", headers=h, json={"message": msg5})
+            check(f"system intent: {msg5}", r5.status_code == 200
+                  and r5.json().get("provider") == "scoped-tool"
+                  and any(s.get("tool") == tool5 for s in (r5.json().get("steps") or [])),
+                  r5.text[:160])
+
+        # --- MCP servers and Skills are independently managed ----------------
+        perms5 = {p["code"] for p in c.get(
+            "/api/v1/meta/bootstrap", headers=h).json()["rbac"]["permissions"]}
+        check("skill:read / skill:write are separate permissions",
+              {"skill:read", "skill:write"} <= perms5)
+        check("MCP and Skills registries are separate endpoints",
+              c.get("/api/v1/mcp/servers", headers=h).status_code == 200
+              and c.get("/api/v1/skills", headers=h).status_code == 200)
+        check("skill rows expose optional hub link", all(
+              "hub" in s for s in c.get("/api/v1/skills", headers=h).json()["skills"]))
+
+        # --- Skill Hub management, search, install and visual editing --------
+        hubs5 = c.get("/api/v1/skill-hubs", headers=h).json()
+        check("3 skill hubs seeded", hubs5["total"] >= 3)
+        check("builtin and remote hub kinds registered",
+              {"builtin", "remote"} <= {x["kind"] for x in hubs5["hubs"]})
+        check("hub stats expose install counter", "installed_from_hub" in c.get(
+            "/api/v1/skill-hubs/stats", headers=h).json())
+        s5 = c.get("/api/v1/skill-hubs/search?q=pdf", headers=h).json()
+        check("cross-hub search finds pdf-extract", any(
+              x["code"] == "pdf-extract" for x in s5["skills"]))
+        check("search results carry hub and install state", all(
+              "hub_id" in x and "installed" in x for x in s5["skills"]))
+        check("category filter works", len(c.get(
+            "/api/v1/skill-hubs/search?category=document", headers=h).json()["skills"]) >= 1)
+        check("hub skill detail", c.get(
+            "/api/v1/skill-hubs/2/skills/pdf-extract", headers=h).status_code == 200)
+        hub_code5 = f"smoke_hub_{suffix}"
+        ch5 = c.post("/api/v1/skill-hubs", headers=h, json={
+            "code": hub_code5, "name": "Smoke Hub", "kind": "builtin", "enabled": True})
+        check("create skill hub", ch5.status_code == 201, ch5.text[:160])
+        hid5 = ch5.json().get("id", 0)
+        check("get skill hub", c.get(f"/api/v1/skill-hubs/{hid5}", headers=h).status_code == 200)
+        check("update skill hub", c.put(f"/api/v1/skill-hubs/{hid5}", headers=h,
+              json={"enabled": False}).status_code == 200)
+        check("sync builtin hub", c.post(
+            f"/api/v1/skill-hubs/{hid5}/sync", headers=h).status_code == 200)
+        c.put("/api/v1/skill-hubs/3", headers=h, json={"enabled": True})
+        deg5 = c.get("/api/v1/skill-hubs/search?q=pdf", headers=h).json()
+        check("unreachable remote hub degrades to builtin index",
+              deg5["total"] >= 1 and len(deg5["errors"]) >= 1, str(deg5["errors"])[:160])
+        c.put("/api/v1/skill-hubs/3", headers=h, json={"enabled": False})
+        ins5 = c.post("/api/v1/skill-hubs/2/install", headers=h, json={"code": "pdf-extract"})
+        check("install skill from hub", ins5.status_code == 201, ins5.text[:200])
+        skid5 = ins5.json().get("skill_id", 0)
+        check("installed skill records hub source",
+              str(ins5.json().get("source", "")).startswith("hub:"))
+        installed5 = next((x for x in c.get("/api/v1/skills", headers=h).json()["skills"]
+                           if x["id"] == skid5), {})
+        check("installed skill linked to its hub",
+              (installed5.get("hub") or {}).get("code") == "extended")
+        check("hub install materializes files", (installed5.get("file_count") or 0) >= 3)
+        prev5 = c.get(f"/api/v1/skills/{skid5}/preview", headers=h).json()
+        check("skill visual preview renders docs", prev5["has_documentation"]
+              and "<" in (prev5["skill_md_html"] or prev5["readme_html"] or ""))
+        check("preview exposes manifest and tools",
+              "manifest" in prev5 and len(prev5["tools"]) >= 2)
+        man5 = c.put(f"/api/v1/skills/{skid5}/manifest", headers=h,
+                     json={"manifest": {"capabilities": ["pdf", "smoke"], "version": "9.9.9"}})
+        check("visual manifest editor saves", man5.status_code == 200
+              and "smoke" in (man5.json().get("manifest") or {}).get("capabilities", []))
+        check("manifest written to skill file", "smoke" in c.get(
+            f"/api/v1/skills/{skid5}/files/manifest.json", headers=h).json().get("content", ""))
+        batch5 = c.put(f"/api/v1/skills/{skid5}/files/batch", headers=h, json={"files": [
+            {"path": "README.md", "content": "# Smoke skill\n\nVisual editor roundtrip."},
+            {"path": "config.json", "content": '{"enabled": true}'}]})
+        check("batch file save", batch5.status_code == 200 and len(batch5.json()["saved"]) == 2)
+        check("saved files listed", {"README.md", "config.json"} <= {
+            f["path"] for f in c.get(f"/api/v1/skills/{skid5}/files", headers=h).json()["files"]})
+        check("preview reflects edited docs", "Smoke skill" in c.get(
+            f"/api/v1/skills/{skid5}/preview", headers=h).json()["readme_html"])
+        check("duplicate hub install rejected", c.post(
+            "/api/v1/skill-hubs/2/install", headers=h,
+            json={"code": "pdf-extract"}).status_code == 400)
+
+        print("\n== v5 cleanup ==")
+        check("cleanup installed hub skill", c.delete(
+            f"/api/v1/skills/{skid5}", headers=h).status_code == 200)
+        check("cleanup custom hub", c.delete(
+            f"/api/v1/skill-hubs/{hid5}", headers=h).status_code == 200)
+        check("cleanup custom component", c.delete(
+            f"/api/v1/meta/registry/components/{ccode}", headers=h).json().get("ok") is True)
+        check("cleanup custom node", c.delete(
+            f"/api/v1/meta/registry/nodes/{ncode}", headers=h).json().get("ok") is True)
+        c.delete(f"/api/v1/forms/{cf5.json().get('id', 0)}", headers=h)
+        c.delete(f"/api/v1/workflows/{nwid5}", headers=h)
 
         print("\n== Cleanup ==")
         check("delete smoke workflow", c.delete(f"/api/v1/workflows/{wid}", headers=h).status_code == 200)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from . import db, security
 from .config import settings
-from .services import model_providers, skill_catalog
+from .services import model_providers, skill_catalog, skill_hubs
 
 PERMISSIONS = [
     ("dashboard:view", "View dashboard", "dashboard", "view"),
@@ -22,9 +22,11 @@ PERMISSIONS = [
     ("agent:read", "Read agents", "agent", "read"),
     ("agent:write", "Manage agents", "agent", "write"),
     ("agent:chat", "Chat with agents", "agent", "chat"),
-    ("mcp:read", "Read MCP skills", "mcp", "read"),
-    ("mcp:write", "Manage MCP skills", "mcp", "write"),
+    ("mcp:read", "Read MCP servers", "mcp", "read"),
+    ("mcp:write", "Manage MCP servers", "mcp", "write"),
     ("mcp:invoke", "Invoke MCP tools", "mcp", "invoke"),
+    ("skill:read", "Read skills and hubs", "skill", "read"),
+    ("skill:write", "Manage skills and hubs", "skill", "write"),
     ("rbac:read", "Read users & roles", "rbac", "read"),
     ("rbac:write", "Manage users & roles", "rbac", "write"),
     ("auth:config", "Configure authentication", "auth", "config"),
@@ -37,8 +39,8 @@ PERMISSIONS = [
 # Auditor: read-only role that can see every row of the audit-class resources.
 AUDITOR_PERMISSIONS = [
     "dashboard:view", "form:read", "workflow:read", "knowledge:read",
-    "agent:read", "mcp:read", "rbac:read", "audit:read", "settings:read",
-    "data:audit",
+    "agent:read", "mcp:read", "skill:read", "rbac:read", "audit:read",
+    "settings:read", "data:audit",
 ]
 
 FORMS = [
@@ -350,7 +352,42 @@ def ensure_registries(now: str | None = None) -> dict:
     created["domestic"] = ensure_domestic_examples(now)
     created["security"] = ensure_security_upgrade(now)
     created["groups_tags"] = ensure_groups_tags(now)
+    created["skill_permissions"] = ensure_permission_upgrade()
+    created["hubs"] = skill_hubs.ensure_hubs()
     return created
+
+
+def ensure_permission_upgrade() -> dict:
+    """Upgrade existing databases with the split Skill / Hub permissions.
+
+    ``seed_if_empty`` only runs on a fresh database, so permissions introduced
+    after the first release must be provisioned idempotently on every boot.
+    Admin roles resolve to ``*`` and need no changes.
+    """
+    existing = {r["code"]: r["id"] for r in db.q("SELECT id,code FROM permissions")}
+    added = 0
+    for code, name, resource, action in PERMISSIONS:
+        if code not in existing:
+            existing[code] = db.insert("permissions", {
+                "code": code, "name": name, "resource": resource, "action": action,
+                "description": f"{resource} / {action}"})
+            added += 1
+    grants = {
+        "developer": ("skill:read", "skill:write"),
+        "operator": ("skill:read",), "viewer": ("skill:read",),
+        "auditor": ("skill:read",),
+    }
+    updated = 0
+    for role in db.q("SELECT id,code,permission_ids FROM roles"):
+        needed = grants.get(role["code"])
+        if not needed or role["code"] == "admin":
+            continue
+        current = (db.loads(role, "permission_ids") or {}).get("permission_ids") or []
+        missing = [existing[c] for c in needed if c in existing and existing[c] not in current]
+        if missing:
+            db.update("roles", role["id"], {"permission_ids": current + missing})
+            updated += 1
+    return {"permissions_added": added, "roles_upgraded": updated}
 
 
 def ensure_groups_tags(now: str | None = None) -> dict:
@@ -407,13 +444,14 @@ def seed_if_empty() -> bool:
         ("developer", "Developer / 开发者", "Build forms, workflows, agents and skills",
          ids("dashboard:view", "form:read", "form:write", "form:publish", "workflow:read", "workflow:write",
              "workflow:run", "knowledge:read", "knowledge:write", "agent:read", "agent:write", "agent:chat",
-             "mcp:read", "mcp:write", "mcp:invoke"), 1, 0),
+             "mcp:read", "mcp:write", "mcp:invoke", "skill:read", "skill:write"), 1, 0),
         ("operator", "Operator / 运营人员", "Submit forms, run workflows, chat with agents",
          ids("dashboard:view", "form:read", "form:submit", "workflow:read", "workflow:run",
-             "knowledge:read", "agent:read", "agent:chat", "mcp:read", "mcp:invoke"), 1, 0),
+             "knowledge:read", "agent:read", "agent:chat", "mcp:read", "mcp:invoke",
+             "skill:read"), 1, 0),
         ("viewer", "Viewer / 只读用户", "Read-only access to platform assets",
          ids("dashboard:view", "form:read", "workflow:read", "knowledge:read", "agent:read",
-             "mcp:read", "rbac:read", "audit:read"), 1, 0),
+             "mcp:read", "skill:read", "rbac:read", "audit:read"), 1, 0),
         ("auditor", "Audit Administrator / 审计管理员",
          "Read-only visibility of all audit-class data (submissions, instances, tasks, logs)",
          ids(*AUDITOR_PERMISSIONS), 1, 0),

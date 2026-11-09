@@ -17,7 +17,7 @@ This directory records **significant, hard-to-reverse architectural decisions** 
 | [0009](0009-domestic-forms-and-approval-runtime.md) | Domestic form engine and long-running human approval runtime | Accepted | Forms / workflow |
 | [0010](0010-data-scopes-portal-and-agent-actions.md) | Centralised data scopes, auth-gated workflow portal and schema-driven agent actions | Accepted | Security / portal / AI |
 | [0011](0011-groups-tags-notifications-and-agent-actions.md) | Groups/tags approvers, notification hub (webhook/email), personal center, agent act/withdraw/urge/notification tools (24 tools) | Accepted | People-side loop |
-| [0011](0011-groups-tags-notifications-and-agent-actions.md) | Groups/tags approvers, notification hub (webhook/email), personal center, agent act/withdraw/urge/notification tools (24 tools) | Accepted | People-side loop |
+| [0012](0012-extensible-registry-agent-coverage-and-skill-hubs.md) | Declarative form/node registry, permission-driven full agent coverage, MCP/Skills split with `skill:*` permissions, visual skill editing and Skill Hubs | Accepted | Extensibility / AI platform |
 
 Referenced from [ARC-001 §11](../architecture.md), [AI-001 §15](../ai-design.md) and [FFC-001](../form-flow-domestic.md).
 

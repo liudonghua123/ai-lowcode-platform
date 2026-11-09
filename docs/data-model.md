@@ -43,6 +43,7 @@ erDiagram
     agents ||--o{ mcp_servers : "server_ids (JSON)"
     agents ||--o{ workflows : "workflow_ids (JSON)"
     mcp_servers ||--o{ mcp_skills : "server_id (nullable)"
+    skill_hubs ||--o{ mcp_skills : "hub_id (nullable)"
     auth_providers ||--o{ sso_states : "provider"
     users ||--o{ mfa_challenges : "user_id"
     forms ||--o{ form_versions : "form_id"
@@ -54,7 +55,7 @@ erDiagram
 
 > JSON-array columns represent logical relationships; SQLite foreign keys are declared where a scalar FK column exists (`form_id`, `workflow_id`, `collection_id`).
 
-## 3. Tables (26)
+## 3. Tables (30)
 
 ### 3.1 Identity & access (6)
 
@@ -109,19 +110,20 @@ erDiagram
 | `agents` | `id`, `code` (unique), `name`, `description`, `mode` (`query`/`act`/`hybrid`), `model`, `system_prompt`, `temperature`, `kb_ids` **JSON**, `skill_ids` **JSON**, `server_ids` **JSON**, `workflow_ids` **JSON**, `status`, `created_by`, timestamps | Four independent binding arrays; `server_ids` restricts the ReAct tool set to declared MCP server tools |
 | `conversations` | `id`, `agent_id`, `title`, `messages` **JSON**, `user_id`, `created_at` | Last 6 turns replayed into the ReAct prompt |
 
-### 3.6 MCP servers, Skills, AI models & system (7)
+### 3.6 MCP servers, Skills, Hubs, AI models & system (8)
 
 | Table | Key columns | Notes |
 | --- | --- | --- |
 | `mcp_servers` | `id`, `code` (unique), `name`, `description`, `transport` (`builtin`/`http`/`sse`/`stdio`), `endpoint`, `command`, `auth_config` **JSON**, `tools` **JSON**, `enabled`, `health`, `last_sync_at`, `status`, `source`, `created_by`, timestamps | Independent MCP connection registry; enabled servers contribute tools |
-| `mcp_skills` | `id`, `code` (unique), `name`, `type`, `endpoint`, `command`, `enabled`, `status` (`installed`/`disabled`/`uninstalled`/`error`), `version`, `source`, `description`, `manifest` **JSON**, `auth_config` **JSON**, `tools` **JSON**, `health`, `last_sync_at`, `installed_at`, `server_id` (nullable link), timestamps | Independent Skill registry + lifecycle state |
+| `mcp_skills` | `id`, `code` (unique), `name`, `type`, `endpoint`, `command`, `enabled`, `status` (`installed`/`disabled`/`uninstalled`/`error`), `version`, `source`, `description`, `manifest` **JSON**, `auth_config` **JSON**, `tools` **JSON**, `health`, `last_sync_at`, `installed_at`, `server_id` (nullable informational link), `hub_id` (nullable), timestamps | Independent Skill registry + lifecycle state; `source=hub:*` records Hub provenance |
 | `mcp_call_logs` | `id`, `request_id`, `method`, `tool`, `source` (`mcp`/`rest`/`agent`/`internal`), `transport`, `actor`, `arguments` **JSON**, `status`, `error`, `result_preview`, `target`, `duration_ms`, `created_at` | Every tool invocation and JSON-RPC method; `target` records `server:<code>` |
 | `mcp_skill_files` | `id`, `skill_id`, `path` (unique per skill), `content`, `language`, `size`, `updated_at` | Editable skill files; mirrored to `data/skills/<code>/` |
 | `ai_providers` | `id`, `code` (unique), `name`, `category` (`llm`/`asr`/`tts`/`embedding`/`rerank`/`vision`), `vendor`, `base_url`, `api_key`, `model`, `enabled`, `is_default`, `config` **JSON**, `description`, timestamps | Runtime model-service configs; `api_key` never returned in full; `config.env_managed` marks rows still bootstrapped from `.env` |
 | `audit_logs` | `id`, `actor`, `action`, `resource`, `detail` **JSON**, `ip`, `level`, `created_at` | Indexed by `created_at DESC` |
-| `settings` | `key` (PK), `value` **JSON**, `updated_at` | Runtime overrides (MFA policy, i18n/theme defaults) |
+| `settings` | `key` (PK), `value` **JSON**, `updated_at` | Runtime overrides (MFA policy, i18n/theme defaults, `registry.custom_types` for runtime-registered component/node specs) |
+| `skill_hubs` | `id`, `code` (unique), `name`, `description`, `kind` (`builtin`/`remote`), `url`, `enabled`, `sync_interval_min`, `auth_config` **JSON**, `last_sync_at`, `index_cache` **JSON**, timestamps | Skill registries; builtin hubs work offline, remote hubs cache their index and degrade to it on failure |
 
-## 4. Indexes (17)
+## 4. Indexes (21)
 
 | Index | Column | Purpose |
 | --- | --- | --- |
@@ -143,14 +145,9 @@ erDiagram
 | `idx_user_groups_code` | `user_groups(code)` | Group lookup by code in approver resolution |
 | `idx_notifications_recipient` | `notifications(recipient, read_at)` | Inbox list and unread counter |
 | `idx_notifications_created` | `notifications(created_at DESC)` | Newest-first inbox ordering |
-| `idx_user_groups_code` | `user_groups(code)` | Group lookup by code in approver resolution |
-| `idx_notifications_recipient` | `notifications(recipient, read_at)` | Inbox list and unread counter |
-| `idx_notifications_created` | `notifications(created_at DESC)` | Newest-first inbox ordering |
-| `idx_user_groups_code` | `user_groups(code)` | Group lookup by code in approver resolution |
-| `idx_notifications_recipient` | `notifications(recipient, read_at)` | Inbox list and unread counter |
-| `idx_notifications_created` | `notifications(created_at DESC)` | Newest-first inbox ordering |
 | `idx_org_units_parent` | `org_units(parent_code)` | Leader-chain traversal |
 | `idx_submissions_serial` | `form_submissions(form_id, serial_no)` | Serial-number uniqueness / lookup |
+| `idx_skill_hubs_enabled` | `skill_hubs(enabled)` | Enabled-hub lookup for cross-hub search |
 
 ## 5. Data access API
 
@@ -177,7 +174,8 @@ erDiagram
 
 - Schema is created idempotently with `CREATE TABLE IF NOT EXISTS`; full table creation is handled by `init_db()`.
 - `init_db()` executes `SCHEMA` (tables), then calls `_migrate()`, then executes `INDEX_SCHEMA`. Indexes are created **after** the migration because some reference columns added by `ALTER TABLE` on existing databases.
-- `_migrate()` is driven by the `MIGRATIONS` dict; it reads `PRAGMA table_info(<table>)` and issues `ALTER TABLE ... ADD COLUMN` for any missing column. Current migrations: `mcp_skills` (lifecycle fields + `server_id`), `kb_documents` (upload metadata), `agents` (`server_ids`), `mcp_call_logs` (`target`), `forms` (`print_template`, `settings`), `form_submissions` (`form_version`, `serial_no`, `flow_instance_id`, `computed`, `updated_at`), `workflows` (`form_code`) and `workflow_instances` (`graph`, `form_data`, `form_code`, `current_nodes`, `variables`, `workflow_version`).
+- `_migrate()` is driven by the `MIGRATIONS` dict; it reads `PRAGMA table_info(<table>)` and issues `ALTER TABLE ... ADD COLUMN` for any missing column. Current migrations: `mcp_skills` (lifecycle fields + `server_id` + `hub_id`), `kb_documents` (upload metadata), `agents` (`server_ids`), `mcp_call_logs` (`target`), `forms` (`print_template`, `settings`), `form_submissions` (`form_version`, `serial_no`, `flow_instance_id`, `computed`, `updated_at`), `workflows` (`form_code`) and `workflow_instances` (`graph`, `form_data`, `form_code`, `current_nodes`, `variables`, `workflow_version`).
+- v0.5.0 (REG-001) adds the `skill_hubs` table, `mcp_skills.hub_id`, `idx_skill_hubs_enabled`, `skill:read`/`skill:write` permissions (idempotently backfilled by `ensure_permission_upgrade()`), and stores runtime-registered component/node specs in `settings.registry.custom_types`.
 - v0.2.0 added the skill lifecycle / journal tables. v0.3.0 adds `mcp_servers` + `ai_providers`, splits MCP servers from Skills, and adds multi-format upload metadata. v0.4.0 (FFC-001) adds the five form/approval tables, their 7 indexes and the extended columns above. `ensure_registries()` / `ensure_domestic_examples()` backfill the new registries and demo data on existing databases.
 - `skill_files.bootstrap()` runs at startup to materialize default files for installed skills that have none; `mcp_journal.ensure_demo()` seeds illustrative journal rows when the table is empty.
 - For production, replace SQLite with Postgres and map JSON columns to `JSONB`; the data access helpers are the single integration seam.

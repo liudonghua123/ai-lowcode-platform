@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import {
   Braces, CheckCircle2, Download, Eye, FileCode2, FilePlus2, FileText,
   FolderOpen, Globe2, Layers, Package, Plus, RefreshCw, Save, Terminal,
-  Trash2, XCircle, Server,
+  Trash2, XCircle, Boxes, LayoutTemplate, Link2,
 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { PageHeader } from '@/components/PageHeader'
 import { Badge, Button, Card, CardContent, Field, Input, Label, Select, Switch, Textarea } from '@/components/ui/basic'
 import { ConfirmDialog, Dialog, Dropdown, Tabs, useToast } from '@/components/ui/overlay'
@@ -11,13 +12,16 @@ import { useI18n } from '@/i18n'
 import { useApp } from '@/store/AppContext'
 import { del, get, post, put } from '@/lib/api'
 import { formatDate } from '@/lib/utils'
-import type { CatalogSkill, McpServer, McpSkill, SkillFile } from '@/types'
+import type { CatalogSkill, McpSkill, SkillFile, SkillPreview } from '@/types'
 
 const fileUrl = (skillId: number, path: string) =>
   `/skills/${skillId}/files/${path.split('/').map(encodeURIComponent).join('/')}`
 
 const jsonText = (value: unknown) => {
   try { return JSON.stringify(value ?? {}, null, 2) } catch { return String(value) }
+}
+const formatJson = (text: string) => {
+  try { return JSON.stringify(JSON.parse(text), null, 2) } catch { return text }
 }
 
 export default function Skills() {
@@ -27,7 +31,6 @@ export default function Skills() {
   const [tab, setTab] = useState('installed')
   const [skills, setSkills] = useState<McpSkill[]>([])
   const [catalog, setCatalog] = useState<CatalogSkill[]>([])
-  const [servers, setServers] = useState<McpServer[]>([])
   const [skillOpen, setSkillOpen] = useState(false)
   const [skillForm, setSkillForm] = useState<any>({})
   const [detail, setDetail] = useState<any>(null)
@@ -42,15 +45,18 @@ export default function Skills() {
   const [newFileOpen, setNewFileOpen] = useState(false)
   const [newFilePath, setNewFilePath] = useState('')
   const [syncMessage, setSyncMessage] = useState('')
+  const [viewMode, setViewMode] = useState<'code' | 'preview'>('code')
+  const [preview, setPreview] = useState<SkillPreview | null>(null)
+  const [manifestOpen, setManifestOpen] = useState(false)
+  const [manifestForm, setManifestForm] = useState<any>({})
 
   const load = async () => {
     try {
-      const [sl, cat, srv] = await Promise.all([
-        get<{ skills: McpSkill[]; servers: { id: number; code: string; name: string }[] }>('/skills'),
+      const [sl, cat] = await Promise.all([
+        get<{ skills: McpSkill[] }>('/skills'),
         get<{ catalog: CatalogSkill[] }>('/skills/catalog'),
-        get<{ servers: McpServer[] }>('/mcp/servers'),
       ])
-      setSkills(sl.skills || []); setCatalog(cat.catalog || []); setServers(srv.servers || [])
+      setSkills(sl.skills || []); setCatalog(cat.catalog || [])
     } catch (e: any) { toast(e.message, 'error') }
   }
   useEffect(() => { void load() }, [])
@@ -125,6 +131,8 @@ export default function Skills() {
     try {
       const d = await get<{ files: SkillFile[]; disk_path: string }>(`/skills/${s.id}/files`)
       setFilesSkill(s); setFiles(d.files || []); setDiskPath(d.disk_path || '')
+      setViewMode('code')
+      get<SkillPreview>(`/skills/${s.id}/preview`).then(setPreview).catch(() => setPreview(null))
       if (d.files?.length) await selectFile(s.id, d.files[0].path)
       else { setActiveFile(''); setFileContent('') }
     } catch (e: any) { toast(e.message, 'error') }
@@ -156,14 +164,37 @@ export default function Skills() {
     try { await post(`/skills/${filesSkill.id}/files/reload`, {}); await openFiles(filesSkill) }
     catch (e: any) { toast(e.message, 'error') }
   }
+  const openManifest = async (s: McpSkill) => {
+    try {
+      const d = await get<SkillPreview>(`/skills/${s.id}/preview`)
+      setPreview(d)
+      const m = d.manifest || {}
+      setManifestForm({ id: s.id, code: s.code, name: s.name,
+        version: s.version || '1.0.0', description: s.description || '',
+        capabilities: (d.capabilities || (m as any).capabilities || []).join(', '),
+        transport: s.type, entrypoint: s.endpoint || s.command || '' })
+      setDetail(null); setManifestOpen(true)
+    } catch (e: any) { toast(e.message, 'error') }
+  }
+  const saveManifest = async () => {
+    const caps = String(manifestForm.capabilities || '').split(',').map((x: string) => x.trim()).filter(Boolean)
+    const manifest = { ...(preview?.manifest || {}), name: manifestForm.name,
+      version: manifestForm.version, description: manifestForm.description,
+      capabilities: caps, transport: manifestForm.transport, entrypoint: manifestForm.entrypoint }
+    try {
+      await put(`/skills/${manifestForm.id}/manifest`, { manifest })
+      setManifestOpen(false); await load(); toast(t('common.saved'), 'success')
+    } catch (e: any) { toast(e.message, 'error') }
+  }
 
   return (
     <div className="mx-auto max-w-[1500px]">
       <PageHeader icon={<Package className="h-5 w-5" />} title={t('skills.title')} subtitle={t('skills.subtitle')}
         actions={<>
           <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="h-3.5 w-3.5" />{t('common.refresh')}</Button>
-          {can('mcp:write') && <Button size="sm" onClick={() => setTab('catalog')}><Download className="h-4 w-4" />{t('skills.installFromCatalog')}</Button>}
-          {can('mcp:write') && <Button size="sm" variant="outline" onClick={() => openSkill()}><Plus className="h-4 w-4" />{t('skills.newSkill')}</Button>}
+          {can('skill:write') && <Button size="sm" onClick={() => setTab('catalog')}><Download className="h-4 w-4" />{t('skills.installFromCatalog')}</Button>}
+          <Link to="/hubs"><Button size="sm" variant="outline"><Link2 className="h-4 w-4" />{t('hubs.openDiscover')}</Button></Link>
+          {can('skill:write') && <Button size="sm" variant="outline" onClick={() => openSkill()}><Plus className="h-4 w-4" />{t('skills.newSkill')}</Button>}
         </>} />
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -171,7 +202,7 @@ export default function Skills() {
           { label: t('skills.installed'), value: skills.filter((s) => s.status === 'installed').length, icon: <CheckCircle2 className="h-4 w-4" /> },
           { label: t('skills.disabled'), value: skills.filter((s) => s.status === 'disabled').length, icon: <XCircle className="h-4 w-4" /> },
           { label: t('skills.catalog'), value: catalog.length, icon: <Package className="h-4 w-4" /> },
-          { label: t('skills.linkedServers'), value: skills.filter((s) => !!s.server_id).length, icon: <Server className="h-4 w-4" /> },
+          { label: t('hubs.installedCount'), value: skills.filter((s) => !!s.hub).length, icon: <Boxes className="h-4 w-4" /> },
         ].map((s, i) => <Card key={i} className="p-3"><div className="flex items-center gap-2 text-primary">{s.icon}
           <span className="mono-num text-sm font-semibold text-foreground">{s.value}</span></div>
           <p className="mt-1 text-[11px] text-muted-foreground">{s.label}</p></Card>)}
@@ -196,22 +227,22 @@ export default function Skills() {
                   <p className="truncate font-mono text-[10px] text-muted-foreground">{s.code} · {s.type} · v{s.version || '1.0.0'}</p></div>
                 <Switch checked={s.enabled && s.status === 'installed'}
                   onCheckedChange={(v) => void lifecycle(s, v ? 'enable' : 'disable')}
-                  disabled={!can('mcp:write') || s.status === 'uninstalled'} />
+                  disabled={!can('skill:write') || s.status === 'uninstalled'} />
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
                 <Badge variant={s.status === 'installed' ? 'success' : s.status === 'disabled' ? 'muted' : 'outline'}>
                   {s.status === 'installed' ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}{statusLabel(s.status)}</Badge>
                 <Badge variant="outline"><FileCode2 className="h-2.5 w-2.5" />{t('mcp.fileCount', { count: s.file_count ?? 0 })}</Badge>
                 <Badge variant="outline">{t('mcp.tools')}: {s.tools?.length ?? 0}</Badge>
-                {s.server && <Badge variant="secondary" className="font-mono text-[9px]"><Server className="h-2.5 w-2.5" />{s.server.code}</Badge>}
+                {s.hub && <Badge variant="secondary" className="font-mono text-[9px]"><Boxes className="h-2.5 w-2.5" />{s.hub.code}</Badge>}
               </div>
               {s.description && <p className="mt-2 line-clamp-2 text-[11px] text-muted-foreground">{s.description}</p>}
               <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3">
                 <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => void openDetail(s)}><Eye className="h-3 w-3" />{t('mcp.viewDetail')}</Button>
                 <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => void openFiles(s)}><FolderOpen className="h-3 w-3" />{t('mcp.files')}</Button>
-                {can('mcp:write') && <div className="ml-auto"><Dropdown trigger={<Button variant="ghost" size="sm" className="h-7 text-xs">···</Button>} items={[
+                {can('skill:write') && <div className="ml-auto"><Dropdown trigger={<Button variant="ghost" size="sm" className="h-7 text-xs">···</Button>} items={[
                   { label: t('common.edit'), icon: <FileText className="h-3 w-3" />, onClick: () => openSkill(s) },
-                  { label: t('skills.syncFromServer'), icon: <RefreshCw className="h-3 w-3" />, onClick: () => void sync(s) },
+                  { label: t('skillEditor.saveManifest'), icon: <LayoutTemplate className="h-3 w-3" />, onClick: () => void openManifest(s) },
                   ...(s.status === 'installed' || s.status === 'disabled'
                     ? [{ label: t('mcp.uninstall'), icon: <Trash2 className="h-3 w-3" />, destructive: true, onClick: () => setConfirmUninstall(s.id) }]
                     : [{ label: t('mcp.reinstall'), icon: <RefreshCw className="h-3 w-3" />, onClick: () => void lifecycle(s, 'reinstall') }]),
@@ -242,7 +273,7 @@ export default function Skills() {
               </div>
               <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground">{item.endpoint || item.command}</p>
               <div className="mt-3 border-t pt-3">
-                <Button size="sm" className="h-7 text-xs" disabled={!can('mcp:write') || item.installed}
+                <Button size="sm" className="h-7 text-xs" disabled={!can('skill:write') || item.installed}
                   onClick={() => void installFromCatalog(item.code)}><Download className="h-3 w-3" />{t('mcp.install')}</Button>
               </div>
             </CardContent></Card>
@@ -262,9 +293,6 @@ export default function Skills() {
               options={['builtin', 'http', 'sse', 'stdio'].map((x) => ({ value: x, label: x }))} /></Field>
             <Field label={t('common.version')}><Input value={skillForm.version} onChange={(e) => setSkillForm({ ...skillForm, version: e.target.value })} /></Field>
           </div>
-          <Field label={t('skills.linkedServer')}><Select value={String(skillForm.server_id || '')}
-            onValueChange={(v) => setSkillForm({ ...skillForm, server_id: Number(v) || 0 })}
-            options={[{ value: '', label: t('common.none') }, ...servers.map((s) => ({ value: String(s.id), label: `${s.name} (${s.code})` }))]} /></Field>
           <Field label={t('common.description')}><Input value={skillForm.description} onChange={(e) => setSkillForm({ ...skillForm, description: e.target.value })} /></Field>
           {skillForm.type !== 'stdio' && <Field label={t('mcp.endpoint')}><Input value={skillForm.endpoint} onChange={(e) => setSkillForm({ ...skillForm, endpoint: e.target.value })} /></Field>}
           {skillForm.type === 'stdio' && <Field label={t('mcp.command')}><Input value={skillForm.command} onChange={(e) => setSkillForm({ ...skillForm, command: e.target.value })} /></Field>}
@@ -275,14 +303,15 @@ export default function Skills() {
       </Dialog>
 
       <Dialog open={!!detail} onOpenChange={() => setDetail(null)} title={t('mcp.skillDetail')} size="lg"
-        footer={<Button variant="outline" onClick={() => setDetail(null)}>{t('common.close')}</Button>}>
+        footer={<><Button variant="outline" onClick={() => setDetail(null)}>{t('common.close')}</Button>
+          {detail && can('skill:write') && <Button onClick={() => void openManifest(detail)}><LayoutTemplate className="h-3.5 w-3.5" />{t('skillEditor.visual')}</Button>}</>}>
         {detail && <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2 text-xs">
             {[
               [t('common.code'), detail.code], [t('common.name'), detail.name],
               [t('common.type'), detail.type], [t('common.version'), detail.version],
               [t('mcp.skillStatus'), statusLabel(detail.status)], [t('mcp.source'), detail.source],
-              [t('skills.linkedServer'), detail.server?.code || '—'], [t('mcp.installedAt'), formatDate(detail.installed_at, locale)],
+              [t('hubs.hub'), detail.hub?.name || detail.source || '—'], [t('mcp.installedAt'), formatDate(detail.installed_at, locale)],
             ].map(([k, v]) => <div key={String(k)} className="rounded-lg border px-3 py-2"><p className="text-[10px] text-muted-foreground">{k}</p><p className="mt-0.5 truncate font-medium">{String(v ?? '—')}</p></div>)}
           </div>
           <div><h3 className="mb-1.5 text-xs font-semibold">{t('mcp.manifest')}</h3>
@@ -297,13 +326,17 @@ export default function Skills() {
 
       <Dialog open={!!filesSkill} onOpenChange={() => setFilesSkill(null)} title={`${t('mcp.fileManager')} · ${filesSkill?.code || ''}`} size="full"
         footer={<><Button variant="outline" onClick={() => setFilesSkill(null)}>{t('common.close')}</Button>
-          <Button onClick={saveFile} disabled={!activeFile || !can('mcp:write')}><Save className="h-3.5 w-3.5" />{t('mcp.saveFile')}{fileDirty ? ' *' : ''}</Button></>}>
+          <Button onClick={saveFile} disabled={!activeFile || !can('skill:write')}><Save className="h-3.5 w-3.5" />{t('mcp.saveFile')}{fileDirty ? ' *' : ''}</Button></>}>
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-[10px] text-muted-foreground">
             <FolderOpen className="h-3.5 w-3.5" /><span className="font-mono">{t('mcp.diskPath')}: {diskPath}</span>
-            <div className="ml-auto flex gap-1.5">
-              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setNewFileOpen(true)} disabled={!can('mcp:write')}><FilePlus2 className="h-3 w-3" />{t('mcp.newFile')}</Button>
-              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => void reloadFiles()} disabled={!can('mcp:write')}><RefreshCw className="h-3 w-3" />{t('mcp.reloadFiles')}</Button>
+            <div className="ml-auto flex flex-wrap gap-1.5">
+              <Button variant={viewMode === 'preview' ? 'default' : 'outline'} size="sm" className="h-7 text-xs"
+                onClick={() => setViewMode(viewMode === 'code' ? 'preview' : 'code')}>
+                {viewMode === 'code' ? <Eye className="h-3 w-3" /> : <FileCode2 className="h-3 w-3" />}
+                {viewMode === 'code' ? t('skillEditor.preview') : t('skillEditor.code')}</Button>
+              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setNewFileOpen(true)} disabled={!can('skill:write')}><FilePlus2 className="h-3 w-3" />{t('mcp.newFile')}</Button>
+              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => void reloadFiles()} disabled={!can('skill:write')}><RefreshCw className="h-3 w-3" />{t('mcp.reloadFiles')}</Button>
             </div>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-[16rem_1fr]">
@@ -317,10 +350,23 @@ export default function Skills() {
             <div className="space-y-2">
               <div className="flex items-center justify-between"><Label className="font-mono text-xs">{activeFile || t('mcp.fileContent')}</Label>
                 {activeFile && <div className="flex gap-1"><Badge variant="outline" className="text-[9px]">{files.find((f) => f.path === activeFile)?.language}</Badge>
-                  {can('mcp:write') && <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => void removeFile()}><Trash2 className="h-3 w-3 text-destructive" /></Button>}</div>}</div>
-              <Textarea rows={18} className="font-mono text-xs" value={fileContent} disabled={!activeFile}
-                onChange={(e) => { setFileContent(e.target.value); setFileDirty(true) }} />
-              <p className="text-[10px] text-muted-foreground">{t('mcp.fileContent')} · {fileContent.length} chars</p>
+                  {can('skill:write') && <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => void removeFile()}><Trash2 className="h-3 w-3 text-destructive" /></Button>}</div>}</div>
+              {viewMode === 'preview' ? (
+                <div className="scroll-thin max-h-[26rem] min-h-[18rem] overflow-auto rounded-lg border bg-card p-4 text-xs leading-relaxed">
+                  {!activeFile ? <p className="text-muted-foreground">{t('common.noData')}</p>
+                    : activeFile.toLowerCase().endsWith('.md') ? (
+                      <div className="space-y-2 [&_h2]:text-base [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:text-sm [&_h3]:font-semibold [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_pre]:overflow-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-2 [&_li]:ml-4 [&_li]:list-disc"
+                        dangerouslySetInnerHTML={{ __html: activeFile.toLowerCase().includes('skill')
+                          ? (preview?.skill_md_html || '') : (preview?.readme_html || '') }} />
+                    ) : activeFile.toLowerCase().endsWith('.json') ? (
+                      <pre className="whitespace-pre-wrap font-mono text-[11px]">{formatJson(fileContent)}</pre>
+                    ) : <pre className="whitespace-pre-wrap font-mono text-[11px]">{fileContent}</pre>}
+                </div>
+              ) : (
+                <Textarea rows={18} className="font-mono text-xs" value={fileContent} disabled={!activeFile}
+                  onChange={(e) => { setFileContent(e.target.value); setFileDirty(true) }} />
+              )}
+              <p className="text-[10px] text-muted-foreground">{t('skillEditor.editorHint')} · {fileContent.length} chars</p>
             </div>
           </div>
         </div>
@@ -329,6 +375,34 @@ export default function Skills() {
       <Dialog open={newFileOpen} onOpenChange={setNewFileOpen} title={t('mcp.newFile')} size="sm"
         footer={<><Button variant="outline" onClick={() => setNewFileOpen(false)}>{t('common.cancel')}</Button><Button onClick={createFile}>{t('common.create')}</Button></>}>
         <Field label={t('mcp.fileName')}><Input value={newFilePath} onChange={(e) => setNewFilePath(e.target.value)} placeholder="notes/readme.md" /></Field>
+      </Dialog>
+
+      <Dialog open={manifestOpen} onOpenChange={() => setManifestOpen(false)}
+        title={`${t('skillEditor.manifest')} · ${manifestForm.code || ''}`} size="lg"
+        footer={<><Button variant="outline" onClick={() => setManifestOpen(false)}>{t('common.cancel')}</Button>
+          <Button onClick={saveManifest} disabled={!can('skill:write')}><Save className="h-3.5 w-3.5" />{t('skillEditor.saveManifest')}</Button></>}>
+        <div className="space-y-3">
+          <p className="text-[11px] text-muted-foreground">{t('skillEditor.manifestHint')} · {t('hubs.hub')}: {preview?.skill?.hub?.name || '—'}</p>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={t('hubs.name')}><Input value={manifestForm.name || ''} onChange={(e) => setManifestForm({ ...manifestForm, name: e.target.value })} /></Field>
+            <Field label={t('hubs.version')}><Input value={manifestForm.version || ''} onChange={(e) => setManifestForm({ ...manifestForm, version: e.target.value })} /></Field>
+          </div>
+          <Field label={t('hubs.description')}><Input value={manifestForm.description || ''} onChange={(e) => setManifestForm({ ...manifestForm, description: e.target.value })} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={t('hubs.kind')}><Input value={manifestForm.transport || ''} disabled /></Field>
+            <Field label={t('mcp.endpoint')}><Input value={manifestForm.entrypoint || ''} onChange={(e) => setManifestForm({ ...manifestForm, entrypoint: e.target.value })} /></Field>
+          </div>
+          <Field label={t('skillEditor.capabilities')}><Input value={manifestForm.capabilities || ''}
+            placeholder="search, fetch, citation" onChange={(e) => setManifestForm({ ...manifestForm, capabilities: e.target.value })} /></Field>
+          <div><Label className="text-xs">{t('skillEditor.tools')} ({preview?.tools?.length || 0})</Label>
+            <div className="mt-1 flex flex-wrap gap-1">{(preview?.tools || []).map((x) =>
+              <Badge key={x.name} variant="secondary" className="font-mono text-[9px]">{x.name}</Badge>)}</div></div>
+          <div><Label className="text-xs">{t('skillEditor.documentation')}</Label>
+            {preview?.has_documentation ? (
+              <div className="mt-1 max-h-40 overflow-auto rounded-lg border bg-muted/20 p-3 text-[11px] leading-relaxed [&_h3]:font-semibold [&_code]:rounded [&_code]:bg-muted [&_code]:px-1"
+                dangerouslySetInnerHTML={{ __html: preview.skill_md_html || preview.readme_html || '' }} />
+            ) : <p className="mt-1 text-[11px] text-muted-foreground">{t('skillEditor.noDocumentation')}</p>}</div>
+        </div>
       </Dialog>
 
       <ConfirmDialog open={confirmDelete !== null} onOpenChange={() => setConfirmDelete(null)} title={t('common.confirmDelete')} onConfirm={remove} />

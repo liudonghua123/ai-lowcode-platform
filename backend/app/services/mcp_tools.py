@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 from .. import db
 from ..deps import has_permission
-from . import data_scope, mcp_journal, mcp_servers, rag, workflow_engine
+from . import agent_admin_tools, data_scope, mcp_journal, mcp_servers, rag, workflow_engine
 
 _current_user: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "mcp_current_user", default=None)
@@ -103,8 +103,14 @@ TOOL_SPECS: list[dict] = [
      "inputSchema": _obj({"unread": {"type": "boolean"}, "limit": {"type": "integer"}})},
 ]
 
+# System-wide capabilities live in their own module so the agent tool catalog
+# grows with the platform without editing this dispatcher.
+TOOL_SPECS.extend(agent_admin_tools.SPECS)
+
 # Tools that mutate business data — blocked for the read-only auditor role.
-WRITE_TOOLS = {"submit_form", "run_workflow", "start_workflow_instance", "submit_form_data", "act_approval_task", "withdraw_instance", "urge_instance"}
+WRITE_TOOLS = {"submit_form", "run_workflow", "start_workflow_instance", "submit_form_data",
+               "act_approval_task", "withdraw_instance", "urge_instance"}
+WRITE_TOOLS.update(agent_admin_tools.WRITE_TOOLS)
 
 PERMISSION_MAP = {
     "list_forms": "form:read", "get_form": "form:read", "submit_form": "form:submit",
@@ -118,6 +124,43 @@ PERMISSION_MAP = {
     "act_approval_task": "workflow:run", "withdraw_instance": "workflow:run",
     "urge_instance": "workflow:run", "my_notifications": None,
 }
+
+PERMISSION_MAP.update(agent_admin_tools.PERMISSIONS)
+# Attach the required permission to every spec so tools/list, the agent runtime
+# and the capability matrix can all be derived from one place.
+for _spec in TOOL_SPECS:
+    _spec.setdefault("permission", PERMISSION_MAP.get(_spec["name"]))
+
+
+def _tool_allowed(name: str, user: dict | None) -> bool:
+    """A tool is visible only when its human operator has the permission."""
+    if user is None:
+        return True  # unauthenticated MCP handshake still gets the full schema
+    needed = PERMISSION_MAP.get(name)
+    return not needed or has_permission(user, needed)
+
+
+def capability_matrix(user: dict | None = None) -> dict:
+    """Group the whole platform tool catalog by capability domain."""
+    groups: dict[str, dict] = {}
+    for spec in TOOL_SPECS:
+        perm = spec.get("permission") or "authenticated"
+        domain = perm.split(":")[0]
+        entry = groups.setdefault(domain, {"tools": [], "permissions": set()})
+        entry["tools"].append({"name": spec["name"], "description": spec["description"],
+                               "permission": spec.get("permission"),
+                               "available": _tool_allowed(spec["name"], user)})
+        if spec.get("permission"):
+            entry["permissions"].add(spec["permission"])
+    return {
+        "domains": {k: {"tools": v["tools"], "permissions": sorted(v["permissions"]),
+                        "total": len(v["tools"]),
+                        "available": sum(1 for t in v["tools"] if t["available"])}
+                    for k, v in sorted(groups.items())},
+        "total_tools": len(TOOL_SPECS),
+        "available_tools": sum(1 for s in TOOL_SPECS if _tool_allowed(s["name"], user)),
+        "permission_driven": True,
+    }
 
 
 def _list_forms(args: dict) -> dict:
@@ -476,6 +519,8 @@ HANDLERS: dict[str, Callable[[dict], dict]] = {
     "urge_instance": _urge_instance, "my_notifications": _my_notifications,
 }
 
+HANDLERS.update(agent_admin_tools.HANDLERS)
+
 
 def _merged_specs(names: set[str] | None = None,
                   server_ids: list[int] | None = None) -> list[dict]:
@@ -492,9 +537,18 @@ def _merged_specs(names: set[str] | None = None,
 
 def list_tools(fmt: str = "mcp", *, names: set[str] | None = None,
                server_ids: list[int] | None = None,
-               include_external: bool = True) -> list[dict]:
+               include_external: bool = True,
+               user: dict | None = None) -> list[dict]:
     specs = _merged_specs(names, server_ids) if include_external else \
         [t for t in TOOL_SPECS if names is None or t["name"] in names]
+    # Permission-driven catalog: an agent (or MCP client) only sees tools its
+    # bound user is actually allowed to invoke.
+    effective = user if user is not None else current_user()
+    specs = [t for t in specs if _tool_allowed(t["name"], effective)]
+    if fmt == "catalog":
+        return [{"name": t["name"], "description": t["description"],
+                 "inputSchema": t["inputSchema"], "permission": t.get("permission")}
+                for t in specs]
     if fmt == "openai":
         return [{"type": "function", "function": {
             "name": t["name"], "description": t["description"],

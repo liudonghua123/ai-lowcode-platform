@@ -14,6 +14,7 @@ GROUPS = [
     {"code": "org", "en": "Organization", "zh": "组织架构"},
     {"code": "business", "en": "Business", "zh": "业务组件"},
     {"code": "layout", "en": "Layout", "zh": "布局容器"},
+    {"code": "advanced", "en": "Advanced / extensible", "zh": "高级/可扩展"},
 ]
 
 # type, group, English label, Chinese label, default width, extra capabilities
@@ -66,6 +67,31 @@ _CATALOG: list[tuple[str, str, str, str, int, tuple[str, ...]]] = [
     ("grid", "layout", "Grid row", "栅格容器", 100, ("layout",)),
     ("tabs", "layout", "Tabs", "标签页", 100, ("layout",)),
     ("collapse", "layout", "Collapse", "折叠面板", 100, ("layout",)),
+
+    # --- v5 extensibility wave ------------------------------------------- #
+    # Extra input primitives (all render through the generic schema renderer).
+    ("password", "basic", "Password", "密码框", 50, ()),
+    ("daterange", "basic", "Date range", "日期区间", 50, ("range",)),
+    ("timerange", "basic", "Time range", "时间区间", 50, ("range",)),
+    ("nps", "basic", "NPS score", "NPS 评分", 50, ("nps",)),
+    ("segmented", "basic", "Segmented control", "分段选择", 100, ("options",)),
+    ("tags", "basic", "Tag input", "标签输入", 100, ("tags",)),
+    ("percent", "basic", "Percentage", "百分比", 50, ("number",)),
+    ("slider_range", "basic", "Range slider", "区间滑块", 100, ("range",)),
+    ("hidden", "basic", "Hidden value", "隐藏字段", 50, ()),
+    ("currency", "business", "Currency", "货币金额", 50, ("cny", "options")),
+    ("markdown", "business", "Markdown editor", "Markdown 编辑器", 100, ("richtext",)),
+    ("html", "layout", "HTML block", "HTML 内容块", 100, ("layout", "richtext")),
+    ("code", "business", "Code editor", "代码编辑器", 100, ("richtext",)),
+    ("steps", "layout", "Steps / wizard", "步骤条", 100, ("layout", "options")),
+    ("button", "layout", "Action button", "动作按钮", 50, ("layout",)),
+    ("ai_autofill", "advanced", "AI autofill", "AI 智能填充", 100, ("ai",)),
+    ("qrscan", "advanced", "QR / barcode scan", "扫码识别", 50, ("capture",)),
+    ("camera", "advanced", "Camera capture", "拍照采集", 100, ("capture", "file")),
+    ("gis", "advanced", "Map coordinate", "地图坐标", 100, ("location",)),
+    ("cron", "advanced", "Schedule expression", "定时表达式", 50, ("code",)),
+    ("iframe", "advanced", "Embedded page", "嵌入页面", 100, ("layout",)),
+    ("custom", "advanced", "Custom component", "自定义组件", 100, ("custom",)),
 ]
 
 VALIDATORS = [
@@ -131,10 +157,14 @@ PERMISSION_MODES = [
     {"code": "hidden", "en": "Hidden", "zh": "隐藏"},
 ]
 
-PRIVATE_FIELD_TYPES = {"divider", "description", "grid", "tabs", "collapse"}
+PRIVATE_FIELD_TYPES = {"divider", "description", "grid", "tabs", "collapse",
+                       "html", "steps", "button", "iframe"}
 COMPUTED_FIELD_TYPES = {"formula", "serial"}
 LAYOUT_TYPES = PRIVATE_FIELD_TYPES
-FORMULA_TYPES = {"formula", "number", "amount"}
+FORMULA_TYPES = {"formula", "number", "amount", "percent", "currency"}
+# Types whose value is a composite object rather than a scalar.
+COMPOSITE_TYPES = {"daterange", "timerange", "slider_range", "gis", "tags",
+                   "table", "attachment", "image", "camera", "region", "cascader"}
 
 
 def entries() -> list[dict]:
@@ -197,8 +227,32 @@ def default_field(ftype: str, index: int, lang: str = "en") -> dict:
     caps = set(entry["caps"]) if entry else set()
     if "options" in caps or ftype in {"select", "multiselect", "radio", "checkbox", "cascader"}:
         field["options"] = ["选项一", "选项二"] if lang == "zh" else ["Option A", "Option B"]
-    if ftype in {"number", "amount", "slider", "rate"}:
+    if ftype in {"number", "amount", "percent", "currency", "slider", "rate"}:
         field["validation"] = {"min": 0}
+    if ftype == "nps":
+        field["validation"] = {"min": 0, "max": 10}
+    if ftype in {"daterange", "timerange", "slider_range"}:
+        field["range"] = {"start": "", "end": ""}
+    if ftype == "tags":
+        field["tags"] = []
+    if ftype == "currency":
+        field["options"] = ["CNY", "USD", "EUR"]
+        field["currency"] = "CNY"
+    if ftype in {"markdown", "html", "code"}:
+        field["content"] = ""
+        field["language"] = "python" if ftype == "code" else "markdown"
+    if ftype == "steps":
+        field["options"] = ["Step 1", "Step 2", "Step 3"]
+    if ftype == "button":
+        field["action"] = "submit"
+    if ftype == "custom":
+        field["component"] = ""
+        field["props"] = {}
+    if ftype == "ai_autofill":
+        field["prompt"] = ""
+        field["source_fields"] = []
+    if ftype == "gis":
+        field["range"] = {"lng": "", "lat": ""}
     if ftype == "table":
         field["columns"] = [
             {"key": "item", "label": "名称", "type": "text"},

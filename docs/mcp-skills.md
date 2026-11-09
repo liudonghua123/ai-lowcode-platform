@@ -17,7 +17,7 @@
   AI agent ────────▶ llm.run_agent (ReAct, bound scope)─┤
                                                         ▼
                      services/mcp_tools.py ────────▶ mcp_call_logs
-                     (24 tool specs + external)        (journal, target)
+                     (55 tool specs + external)        (journal, target)
                           │        ▲
                           │        │ declared_tools() / call_remote_tool
                           ▼        │
@@ -28,11 +28,9 @@
 
 `MCPAuthASGIMiddleware` (pure ASGI) binds an optional bearer token, tags the context with `source` / `actor` / `request_id` / `method`, and buffers the JSON-RPC body once so the method name can be journaled without touching streaming responses.
 
-### 1.1 Built-in tool registry — 24 tools
+### 1.1 Built-in tool registry — 55 tools
 
-`mcp_tools.TOOL_SPECS` grew from 12 to 20. The original 12 cover form, workflow,
-knowledge, user and stats operations. The eight additions are self-service and
-schema tools backing the redesigned portal and the agent intent planner:
+`mcp_tools.TOOL_SPECS` now declares **55 tools** in three layers: 12 platform/business tools, 12 self-service and schema-action tools (below), and 31 system-administration tools from `services/agent_admin_tools.py` (`list_mcp_servers`, `list_skills`, `search_skill_hub`, `add_skill_from_hub`, `manage_skill_hub`, `list_ai_providers`, `get_platform_settings`, `list_roles`, `query_audit_logs`, `list_registry`, `create_form`, `create_workflow`, `register_custom_type`, `my_capabilities`, …). Every spec carries a permission; `tools/list`, `/mcp/tools` and `/agents/meta/runtime` filter by the caller (admin 55/55, operator 35/55). `capability_matrix()` groups them into 10 permission domains, rendered by the agent studio's **Capabilities** panel. The self-service layer:
 
 | Tool | Purpose | Permission | Writes |
 | --- | --- | --- | --- |
@@ -142,15 +140,21 @@ Each install creates five editable files: `SKILL.md`, `manifest.json`, `config.j
 
 | Operation | Endpoint | Permission |
 | --- | --- | --- |
-| List files + disk path | `GET /skills/{id}/files` | `mcp:read` |
-| Read one file | `GET /skills/{id}/files/{path}` | `mcp:read` |
-| Create / update | `PUT /skills/{id}/files/{path}` | `mcp:write` |
-| Delete | `DELETE /skills/{id}/files/{path}` | `mcp:write` |
-| Re-read disk mirror | `POST /skills/{id}/files/reload` | `mcp:write` |
+| List files + disk path | `GET /skills/{id}/files` | `skill:read` |
+| Read one file | `GET /skills/{id}/files/{path}` | `skill:read` |
+| Create / update | `PUT /skills/{id}/files/{path}` | `skill:write` |
+| Delete | `DELETE /skills/{id}/files/{path}` | `skill:write` |
+| Re-read disk mirror | `POST /skills/{id}/files/reload` | `skill:write` |
 
 Path rules (`services/skill_files.validate_path`): relative paths only, `[A-Za-z0-9._/-]`, no `..` segments, no double slashes, resolved target must stay inside `data/skills/<code>/`. Content is capped at 200,000 characters. Language is inferred from the extension (`md` → markdown, `json` → json, …).
 
 The UI (`pages/Skills.tsx`) provides a two-pane file manager: a file tree on the left, an editor on the right, plus new-file, save, delete and reload-from-disk actions. The disk mirror is best-effort — SQLite remains authoritative.
+
+### 7.1 Visual editing and Skill Hubs (v5)
+
+`GET /skills/{id}/preview` returns a read-only visual preview: merged manifest, XSS-safe rendered `SKILL.md` / `README.md` HTML, declared tools and the file inventory. `PUT /skills/{id}/manifest` saves a structured manifest (name, version, description, capabilities, transport, entrypoint) and mirrors it to `manifest.json`; `PUT /skills/{id}/files/batch` saves up to 50 files in one request. The UI adds a **Visual** manifest dialog and a **Code / Preview** toggle in the file manager.
+
+`skill_hubs` introduces independently managed skill registries: 3 seeded hubs (2 offline builtin, 1 remote), 13 searchable skills in 6 categories, cross-hub search, one-click install, Hub CRUD / sync and cached-index degradation when a remote hub is unreachable. Installed skills carry `hub_id` and `source=hub:<code>`. The `/hubs` page provides Discover and Hub management tabs. See [REG-001](extensible-registry-and-skill-hubs.md) for the full design and the 15 v5 endpoints.
 
 ## 8. Call journal
 
@@ -190,12 +194,14 @@ The frontend journal tab (`pages/McpServers.tsx`) shows four KPI cards, a per-to
 | `mcp:read` | Tool catalog, status, server/skill list/detail/catalog, file listing/reading, journal queries/export |
 | `mcp:write` | Server registration/sync/enable/delete, skill registration/install/lifecycle, file create/update/delete/reload, skill deletion, journal clearing |
 | `mcp:invoke` | REST tool invocation and external MCP tool calls |
+| `skill:read` | Skills list/detail/catalog/preview, file listing/reading, Hub list/search/detail |
+| `skill:write` | Skill install/lifecycle/delete, manifest + batch file save, Hub CRUD/sync/install |
 
 Tool-level authorization still uses `PERMISSION_MAP` inside `call_tool` (see ADR-0002). All lifecycle, file and journal-clear actions are written to `audit_logs` via `deps.audit()` with actions such as `mcp.skill.install`, `mcp.skill.files.write`, `mcp.journal.clear`. Related registries have their own gates: `/ai/providers` reads use `mcp:read` and writes `settings:write` ([AIM-001](ai-models.md)); `/knowledge/upload` uses `knowledge:write` ([KNB-001](knowledge-upload.md)).
 
 ## 10. Validation
 
-`backend/tests/smoke.py` — **205 assertions**, including journal recording/statistics/export/clear, catalog, install with file creation, file CRUD, path-traversal rejection, enable/disable/uninstall/reinstall and permanent delete; MCP server independent registration, sync, tools, invoke rejection, enable and delete; skill deletion leaving servers intact; agent bindings with stale-id cleanup; AI provider categories/defaults/key masking; multi-format upload and unsupported-format rejection. `POST /mcp` `initialize` / `tools/list` / `tools/call` remain 200 after the ASGI body-buffering change. `pnpm typecheck`, `pnpm build`, `pnpm check:i18n` (824 en/zh keys), `pnpm build` and `ruff check app tests` all pass.
+`backend/tests/smoke.py` — **272 assertions**, including journal recording/statistics/export/clear, catalog, install with file creation, file CRUD, path-traversal rejection, enable/disable/uninstall/reinstall and permanent delete; MCP server independent registration, sync, tools, invoke rejection, enable and delete; skill deletion leaving servers intact; agent bindings with stale-id cleanup; AI provider categories/defaults/key masking; multi-format upload and unsupported-format rejection. `POST /mcp` `initialize` / `tools/list` / `tools/call` remain 200 after the ASGI body-buffering change. `pnpm typecheck`, `pnpm build`, `pnpm check:i18n` (929 en/zh keys), `pnpm build` and `ruff check app tests` all pass. A further 68 v5 assertions cover the declarative registry, runtime custom types, 8 new node executors, permission-filtered tool catalogues, system chat intents, `skill:read`/`skill:write` separation and the full Hub install → preview → manifest → batch-file lifecycle. `pnpm typecheck`, `pnpm build`, `pnpm check:i18n` (929 en/zh keys) and `ruff check app tests` all pass.
 
 ## 11. Production considerations
 

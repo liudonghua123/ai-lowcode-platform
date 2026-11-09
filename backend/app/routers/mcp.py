@@ -30,24 +30,26 @@ class InvokeIn(BaseModel):
 # --------------------------------------------------------------------------- #
 # Tool catalog + server status
 # --------------------------------------------------------------------------- #
-@router.get("/tools", summary="Platform + enabled-server MCP tool catalog")
-def tools(_user: dict = Depends(deps.require("mcp:read"))):
-    specs = mcp_tools.list_tools()
+@router.get("/tools", summary="Platform + enabled-server MCP tool catalog (permission filtered)")
+def tools(user: dict = Depends(deps.require("mcp:read"))):
+    specs = mcp_tools.list_tools(user=user)
+    builtin = len(mcp_tools.list_tools(user=user, include_external=False))
     return {"tools": specs, "total": len(specs),
             "builtin_tools": len(mcp_tools.TOOL_SPECS),
-            "external_tools": len(specs) - len(mcp_tools.TOOL_SPECS),
+            "visible_builtin_tools": builtin,
+            "external_tools": max(0, len(specs) - builtin),
             "permissions": mcp_tools.PERMISSION_MAP}
 
 
 @router.get("/status", summary="MCP transport status")
-def status(_user: dict = Depends(deps.require("mcp:read"))):
+def status(user: dict = Depends(deps.require("mcp:read"))):
     servers = mcp_servers.stats()
     by_status = {r["status"]: r["count"] for r in db.q(
         "SELECT status, COUNT(*) AS count FROM mcp_skills GROUP BY status")}
     return {"enabled": settings.mcp_enabled, "endpoint": "/mcp",
             "transport": "streamable-http", "stateless": settings.mcp_stateless,
             "protocol_version": "2025-06-18",
-            "tool_count": len(mcp_tools.list_tools()),
+            "tool_count": len(mcp_tools.list_tools(user=user)),
             "builtin_tool_count": len(mcp_tools.TOOL_SPECS),
             "external_servers": settings.mcp_external_servers,
             "servers": servers,

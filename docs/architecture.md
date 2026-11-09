@@ -12,7 +12,7 @@
 
 ## 1. Purpose and scope
 
-This document describes the **as-built architecture** of the AI Low-Code Platform: a full-stack, front-end/back-end separated system that provides a **China-localized form engine** (44 field types, statutory validators, formula sandbox, detail tables, conditional rules), a visual DAG workflow orchestrator plus a **long-running human approval runtime** (countersign, parallel/join, delegation, task actions), a versioned REST API, an MCP server with **independently managed MCP server and Skill registries**, multi-category AI model configuration, multi-format knowledge upload, knowledge-grounded AI query/action agents with declarative resource bindings, RBAC, five SSO protocols and role/user-scoped MFA. The domestic extension is specified in [FFC-001](form-flow-domestic.md) and [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md).
+This document describes the **as-built architecture** of the AI Low-Code Platform: a full-stack, front-end/back-end separated system that provides a **China-localized form engine** (66 field types, statutory validators, formula sandbox, detail tables, conditional rules), a visual DAG workflow orchestrator plus a **long-running human approval runtime** (countersign, parallel/join, delegation, task actions), a versioned REST API, an MCP server with **independently managed MCP server and Skill registries**, multi-category AI model configuration, multi-format knowledge upload, knowledge-grounded AI query/action agents with declarative resource bindings, RBAC, five SSO protocols and role/user-scoped MFA. The domestic extension is specified in [FFC-001](form-flow-domestic.md) and [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md).
 
 **In scope:** system context, containers, backend/frontend components, runtime flows, data flow, deployment topology, cross-cutting concerns, quality attributes and evolution boundaries.
 
@@ -69,7 +69,7 @@ flowchart LR
         SEC["Security layer<br/>JWT · PBKDF2 · TOTP<br/>WebAuthn · RBAC"]
         HOST["SPA static host<br/>frontend/dist fallback"]
     end
-    DB[(SQLite<br/>WAL · 29 tables)]
+    DB[(SQLite<br/>WAL · 30 tables)]
     FS[("dist/ static assets")]
 
     SPA -->|JSON + Bearer| API
@@ -86,7 +86,7 @@ flowchart LR
 | Container | Responsibility | Technology |
 | --- | --- | --- |
 | SPA | All UI, visual designers, i18n, theming | Vite 6, React 18, TypeScript, Tailwind 3, shadcn/ui-style components, lucide-react |
-| REST layer | 134 OpenAPI paths, Pydantic models, error semantics | FastAPI 0.128+, `APIRouter`, `Depends` |
+| REST layer | 149 OpenAPI paths, Pydantic models, error semantics | FastAPI 0.128+, `APIRouter`, `Depends` |
 | MCP server | MCP `initialize` / `tools/list` / `tools/call` / resources / prompts | `fastmcp` 4.1.6 `http_app(path="/mcp")`, builtin JSON-RPC fallback |
 | Service layer | Pure business logic, no HTTP concerns | Python modules in `app/services/` |
 | Security layer | Identity, tokens, password/MFA, permission checks | stdlib `hashlib`/`hmac`, HS256 JWT, `contextvars` |
@@ -107,13 +107,13 @@ app/
 ├── routers/           auth · rbac · forms · workflows · knowledge · agents · mcp
 │                      mcp_servers · skills · ai_providers · audit · meta
 └── services/
-    ├── mcp_tools.py        ★ capability registry (24 tools, schemas, permissions, agent scoping)
+    ├── mcp_tools.py        ★ capability registry (55 tools, schemas, permissions, agent scoping)
     ├── mcp_servers.py      MCP server registry, probe/sync, external tool bridge
     ├── model_providers.py  6 AI categories, key masking, effective_llm()
     ├── documents.py        stdlib-only multi-format parsing (OOXML/PDF/OCR/text)
-    ├── workflow_engine.py  DAG validation (14 node types), condition groups, dry-run execution
+    ├── workflow_engine.py  DAG validation (24 node types), condition groups, dry-run execution
     ├── flow_runtime.py     ★ long-running approval: assignee rules, signing modes, tasks, timeouts
-    ├── form_catalog.py     ★ 44 field types in 5 groups, validators, operators, functions
+    ├── form_catalog.py     ★ 66 field types in 6 groups, validators, operators, functions
     ├── form_rules.py       ★ statutory validation, AST formula sandbox, visibility, permissions
     ├── rag.py              mixed zh/en tokenizer, chunking, BM25, context assembly
     ├── llm.py              3 backends, ReAct orchestration, grounded answers
@@ -255,13 +255,13 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 
 | Concern | Implementation |
 | --- | --- |
-| i18n | 824 leaf keys per locale, default `en`, `localStorage`, `<html lang>` sync, English fallback |
+| i18n | 929 leaf keys per locale, default `en`, `localStorage`, `<html lang>` sync, English fallback |
 | Theme | `system` (default) / `light` / `dark`, `prefers-color-scheme` listener, HSL CSS variables, `meta[theme-color]` |
 | Audit | Every mutation → `audit_logs(actor, action, resource, detail, ip, level, created_at)` |
 | Configuration | `python-dotenv` → frozen `Settings`; `settings` table for runtime overrides |
 | Errors | `HTTPException` with 401 / 403 / 404 / 422; `ApiError` on the client; 401 triggers global logout |
 | Observability | `/api/v1/meta/health`, `/meta/stats`, `/agents/meta/runtime`, `/agents/meta/bindings`, `/mcp/status`, `/mcp/calls/stats`, `/knowledge/stats` |
-| Testing | `backend/tests/smoke.py` — 205 end-to-end assertions; `pnpm typecheck`, `pnpm build`, `pnpm check:i18n`, `ruff check` |
+| Testing | `backend/tests/smoke.py` — 272 end-to-end assertions; `pnpm typecheck`, `pnpm build`, `pnpm check:i18n`, `ruff check` |
 
 ## 11. Technology decisions (summary)
 
@@ -286,7 +286,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | Security | HS256 JWT, PBKDF2, per-route RBAC, audit | RS256/rotating keys, rate limiting, secret manager |
 | AI accuracy | Deterministic mock + BM25 grounding | Real LLM, vector/embedding store, reranking |
 | Scalability | In-process indexes, synchronous execution | Task queue for workflow runs, external vector DB |
-| Testability | 205 smoke assertions, no network required | Contract tests, load tests, MCP conformance suite |
+| Testability | 272 smoke assertions, no network required | Contract tests, load tests, MCP conformance suite |
 | Operability | Health/stats/runtime endpoints | Structured logging, metrics, tracing |
 
 ## 13. Known limitations
@@ -302,10 +302,10 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | Requirement | Design element | Code |
 | --- | --- | --- |
 | Visual form design | Metadata-driven designer | `routers/forms.py`, `pages/Forms.tsx` |
-| Domestic forms (FFC-001) | 44-field catalog, statutory validation, AST formulas, versions, print/CSV | `services/form_catalog.py`, `services/form_rules.py`, `routers/forms.py`, `pages/Forms.tsx` |
+| Domestic forms (FFC-001) | 66-field catalog, statutory validation, AST formulas, versions, print/CSV | `services/form_catalog.py`, `services/form_rules.py`, `routers/forms.py`, `pages/Forms.tsx` |
 | Visual workflow orchestration | DAG validator + engine | `services/workflow_engine.py`, `pages/Workflows.tsx` |
 | Human approval runtime (ADR-0009) | Long-running instances, countersign, parallel/join, task actions, delegation | `services/flow_runtime.py`, `routers/workflows.py`, `pages/Workflows.tsx` |
-| REST API | Versioned routers | `routers/*.py` (174 route decorators → 134 OpenAPI paths) |
+| REST API | Versioned routers | `routers/*.py` (192 route decorators → 149 OpenAPI paths) |
 | MCP transport + tool registry | Dual-transport MCP + single registry | `mcp_server.py`, `routers/mcp.py`, `services/mcp_tools.py` |
 | MCP servers (independent) | CRUD, probe/sync, declared tools, remote invoke | `routers/mcp_servers.py`, `services/mcp_servers.py`, `mcp_servers` |
 | Skills (independent) | Lifecycle, catalog, editable files, `server_id` link | `routers/skills.py`, `services/skill_*.py`, `mcp_skills` |

@@ -18,7 +18,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .. import db, deps
-from ..services import data_scope, form_catalog, form_rules
+from ..services import data_scope, form_catalog, form_rules, registry
 
 router = APIRouter(prefix="/forms", tags=["Forms"])
 
@@ -85,10 +85,11 @@ def _validate_schema(schema: list[dict]) -> None:
     keys = [f.get("key") for f in schema]
     if len(keys) != len(set(keys)):
         raise HTTPException(status_code=400, detail="Field keys must be unique")
+    allowed = set(FIELD_TYPES) | {c["code"] for c in registry.custom_components()}
     for f in schema:
         if not f.get("key"):
             raise HTTPException(status_code=400, detail="Every field needs a key")
-        if f.get("type") not in FIELD_TYPES:
+        if f.get("type") not in allowed:
             raise HTTPException(status_code=400, detail=f"Unsupported field type: {f.get('type')}")
         if f.get("type") == "formula":
             try:
@@ -122,9 +123,22 @@ def _form_or_404(form_id: int) -> dict:
 def form_meta(lang: str = Query("en", pattern="^(en|zh)$"),
               _user: dict = Depends(deps.require("form:read"))):
     data = form_catalog.catalog(lang)
+    specs = {s["type"]: s["config_schema"] for s in registry.form_component_specs(lang)}
+    data["config_schemas"] = specs
+    data["composite_types"] = sorted(form_catalog.COMPOSITE_TYPES)
+    data["fields"] = [{**f, "config_schema": specs.get(f["type"], [])} for f in data["fields"]]
     data["groups"] = [{"code": g["code"], "label": g["label"],
                        "fields": [f["type"] for f in data["fields"] if f["group"] == g["code"]]}
                       for g in data["groups"]]
+    custom = registry.custom_components()
+    if custom:
+        data["groups"].append({"code": "custom", "label": "Custom" if lang == "en" else "自定义",
+                               "fields": [c["code"] for c in custom]})
+        for c in custom:
+            data["fields"].append({"type": c["code"], "group": "custom",
+                                   "label": c.get("name") or c["code"], "width": 100,
+                                   "caps": ["custom"], "config_schema": specs.get(c["code"], [])})
+        data["field_types"] = list(dict.fromkeys(data["field_types"] + [c["code"] for c in custom]))
     data["field_count"] = len(data["fields"])
     data["region_levels"] = 3
     return data

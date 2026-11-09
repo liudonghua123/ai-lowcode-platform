@@ -213,7 +213,7 @@ PYTHONPATH=. python3 tests/smoke.py        # 189 passed, 0 failed (205 after ADR
 
 cd ../frontend
 pnpm typecheck                            # pass
-pnpm check:i18n                           # en 789 / zh 789 at the time, 0 missing (824 now)
+pnpm check:i18n                           # en 789 / zh 789 at the time, 0 missing (929 now)
 pnpm build                                # pass
 ```
 
@@ -226,7 +226,7 @@ dynamic-form action creating a real instance (withdrawn afterwards).
 Runtime figures at the time: **126 OpenAPI paths / 161 route decorators /
 26 tables / 17 indexes / 20 MCP tools / 789 i18n keys / 189 assertions**;
 [ADR-0011](adr/0011-groups-tags-notifications-and-agent-actions.md) later grew them
-to **134 / 174 / 29 / 20 / 24 / 824 / 205**.
+to **134 / 174 / 29 / 20 / 24 / 824 / 205**. Current figures after ADR-0012: **149 / 192 / 30 / 21 / 55 / 929 / 272** (see [REG-001](extensible-registry-and-skill-hubs.md)).
 
 ## 7. Known limitations
 

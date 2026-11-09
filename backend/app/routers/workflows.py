@@ -11,40 +11,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from .. import db, deps
-from ..services import data_scope, flow_runtime, form_rules, workflow_engine
+from ..services import data_scope, flow_runtime, form_rules, registry, workflow_engine
 
 router = APIRouter(prefix="/workflows", tags=["Workflows"])
 
-NODE_TYPES = [
-    {"type": "start", "name": "Start / 开始", "category": "control", "color": "#6366f1",
-     "config": flow_runtime.NODE_CONFIG_HINTS["start"]},
-    {"type": "end", "name": "End / 结束", "category": "control", "color": "#64748b",
-     "config": []},
-    {"type": "form", "name": "Form / 表单节点", "category": "task", "color": "#0ea5e9",
-     "config": flow_runtime.NODE_CONFIG_HINTS["form"]},
-    {"type": "approval", "name": "Approval / 审批", "category": "task", "color": "#8b5cf6",
-     "config": flow_runtime.NODE_CONFIG_HINTS["approval"]},
-    {"type": "cc", "name": "CC / 抄送", "category": "task", "color": "#38bdf8",
-     "config": flow_runtime.NODE_CONFIG_HINTS["cc"]},
-    {"type": "condition", "name": "Condition / 条件分支", "category": "logic", "color": "#f59e0b",
-     "config": flow_runtime.NODE_CONFIG_HINTS["condition"]},
-    {"type": "parallel", "name": "Parallel / 并行分支", "category": "logic", "color": "#a855f7",
-     "config": []},
-    {"type": "join", "name": "Join / 分支汇聚", "category": "logic", "color": "#7c3aed",
-     "config": flow_runtime.NODE_CONFIG_HINTS["join"]},
-    {"type": "delay", "name": "Delay / 定时等待", "category": "logic", "color": "#f97316",
-     "config": flow_runtime.NODE_CONFIG_HINTS["delay"]},
-    {"type": "subflow", "name": "Subflow / 子流程", "category": "logic", "color": "#0d9488",
-     "config": flow_runtime.NODE_CONFIG_HINTS["subflow"]},
-    {"type": "ai", "name": "AI / 智能处理", "category": "ai", "color": "#ec4899",
-     "config": flow_runtime.NODE_CONFIG_HINTS["ai"]},
-    {"type": "knowledge", "name": "Knowledge / 知识检索", "category": "ai", "color": "#14b8a6",
-     "config": flow_runtime.NODE_CONFIG_HINTS["knowledge"]},
-    {"type": "http", "name": "HTTP / 外部接口", "category": "integration", "color": "#22c55e",
-     "config": flow_runtime.NODE_CONFIG_HINTS["http"]},
-    {"type": "notification", "name": "Notification / 通知", "category": "integration",
-     "color": "#f97316", "config": flow_runtime.NODE_CONFIG_HINTS["notification"]},
-]
+# Palette entries (including their config schemas) come from the declarative
+# registry. Runtime-registered custom node types show up here automatically.
+NODE_TYPES = registry.node_types("en")
 OPERATORS = ["eq", "ne", "gt", "gte", "lt", "lte", "contains", "not_contains",
              "in", "not_in", "empty", "not_empty"]
 
@@ -146,12 +119,13 @@ def _instance_readable(instance_id: int, user: dict) -> dict:
 @router.get("/meta", summary="Node palette and approval-rule metadata")
 def workflow_meta(lang: str = Query("en", pattern="^(en|zh)$"),
                   _user: dict = Depends(deps.require("workflow:read"))):
-    return {"node_types": NODE_TYPES, "operators": OPERATORS, **flow_runtime.meta(lang)}
+    return {"node_types": registry.node_types(lang), "operators": OPERATORS,
+            **flow_runtime.meta(lang)}
 
 
 @router.get("/node-types", summary="Node palette metadata for the canvas")
 def node_types(_user: dict = Depends(deps.require("workflow:read"))):
-    return {"node_types": NODE_TYPES, "operators": OPERATORS}
+    return {"node_types": registry.node_types(), "operators": OPERATORS}
 
 
 # --------------------------------------------------------------------------- #

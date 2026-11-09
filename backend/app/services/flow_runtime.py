@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .. import db
-from . import form_catalog, form_rules, notify, workflow_engine
+from . import form_catalog, form_rules, notify, registry, workflow_engine
 
 APPROVER_RULES = [
     {"code": "users", "en": "Designated members", "zh": "指定成员"},
@@ -58,20 +58,10 @@ TIMEOUT_ACTIONS = [
 ACTIONS = ["approve", "reject", "return", "transfer", "addsign_before",
            "addsign_after", "withdraw", "urge"]
 
+# Node property metadata now comes from the single declarative registry.
 NODE_CONFIG_HINTS: dict[str, list[str]] = {
-    "start": ["form_code", "initiator_scope"],
-    "approval": ["approver_rule", "assignees", "sign_mode", "ratio", "leader_level",
-                 "exclude_initiator", "empty_policy", "timeout_hours", "timeout_action",
-                 "groups", "tags",
-                 "comment_required", "signature_required", "field_permissions",
-                 "reject_policy", "allow_return", "allow_transfer", "allow_addsign"],
-    "cc": ["approver_rule", "assignees"],
-    "condition": ["conditions", "logic", "field", "operator", "value", "expression"],
-    "parallel": [], "join": ["join_mode"], "delay": ["delay_hours"],
-    "subflow": ["workflow_code"], "form": ["form_code", "assignee"],
-    "ai": ["prompt", "model"], "knowledge": ["query", "top_k"],
-    "http": ["method", "url", "headers", "body"],
-    "notification": ["channel", "template"], "end": [],
+    **registry.config_hints(),
+    "reject_end": [],  # synthetic terminal node used by reject policies
 }
 
 
@@ -81,6 +71,9 @@ def meta(lang: str = "en") -> dict:
     return {"approver_rules": lbl(APPROVER_RULES), "sign_modes": lbl(SIGN_MODES),
             "empty_policies": lbl(EMPTY_POLICIES), "timeout_actions": lbl(TIMEOUT_ACTIONS),
             "actions": ACTIONS, "node_config": NODE_CONFIG_HINTS,
+            "node_specs": registry.node_types(lang),
+            "node_categories": sorted({n["category"] for n in registry.node_types(lang)}),
+            "human_nodes": sorted(registry.human_node_types()),
             "operators": [o["code"] for o in form_catalog.OPERATORS]}
 
 
@@ -144,8 +137,16 @@ def _leaders_of(dept: str | None, levels: int) -> list[str]:
 def resolve_assignees(node: dict, state: dict, *, previous: str | None = None) -> tuple[list[str], str]:
     """Resolve the assignee list for a node; returns (names, policy_used)."""
     cfg = node.get("config") or {}
-    rule = cfg.get("approver_rule") or "roles"
     actor = state.get("initiator") or "admin"
+    # Human-input nodes address a fixed editor instead of an approver rule.
+    if node.get("type") == "human_input":
+        names = [str(x) for x in (cfg.get("assignees") or []) if x]
+        if cfg.get("assignee"):
+            names.insert(0, str(cfg["assignee"]))
+        seen_h: set[str] = set()
+        names = [x for x in names if not (x in seen_h or seen_h.add(x))]
+        return _apply_delegations(names), cfg.get("empty_policy") or "admin"
+    rule = cfg.get("approver_rule") or "roles"
     form_data = state.get("form_data") or {}
     names: list[str] = []
     users = _active_users()
@@ -350,7 +351,7 @@ def _enter(instance_id: int, node_ids: list[str], state: dict, *, depth: int = 0
             state["variables"].get("join_arrivals", {}).pop(nid, None)
             _update_state(instance_id, variables=state["variables"])
             return _enter(instance_id, _next_targets(node, graph, state), state, depth=depth + 1)
-        if ntype in {"approval", "cc"}:
+        if ntype in {"approval", "cc"} | registry.human_node_types():
             prev = state["variables"].get("last_approver")
             names, policy = resolve_assignees(node, state, previous=prev)
             if ntype == "cc" or not names:
@@ -372,7 +373,7 @@ def _enter(instance_id: int, node_ids: list[str], state: dict, *, depth: int = 0
             state["variables"]["rounds"] = rounds
             _update_state(instance_id, variables=state["variables"])
             _create_tasks(instance_id, node, names, round_no=round_no,
-                          node_type="cc" if ntype == "cc" else "approval")
+                          node_type="cc" if ntype == "cc" else ntype)
             if nid not in active:
                 active.append(nid)
             _log(instance_id, {"event": "tasks", "node": nid, "name": node.get("name"),

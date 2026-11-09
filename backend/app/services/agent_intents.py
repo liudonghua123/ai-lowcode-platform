@@ -178,6 +178,69 @@ def _act_plan(message: str) -> dict | None:
     return None
 
 
+# System-wide capability intents (v5). Order matters: specific phrases first.
+_STOP_CODES = {"skill", "skills", "hub", "hubs", "install", "add", "search", "find",
+               "form", "forms", "workflow", "workflows", "create", "new", "list",
+               "the", "from", "please", "帮我", "一个", "技能", "表单", "流程"}
+
+
+def _code_from(message: str) -> str | None:
+    for token in re.findall(r"[a-z][a-z0-9_-]{2,40}", message.lower()):
+        if token not in _STOP_CODES:
+            return token
+    return None
+
+
+def _system_plan(message: str) -> dict | None:
+    """Route platform-administration requests to the matching system tool."""
+    m = message or ""
+    code = _code_from(m)
+    q = re.sub(r"(搜索|查找|找|技能|市场|hub|skill|search|find|discover|一下|个|请|帮我|\s)+",
+               " ", m.lower()).strip()[:60]
+    if re.search(r"系统能力|能力清单|全部能力|我能做什么|capabilit(y|ies)|what can (i|you) do", m, re.I):
+        return {"mode": "tool", "tool": "my_capabilities", "args": {}}
+    if re.search(r"搜索技能|找技能|技能市场|发现技能|search skill|find skill|discover skill", m, re.I):
+        return {"mode": "tool", "tool": "search_skill_hub", "args": {"q": q}}
+    if re.search(r"技能库|技能源|hub 列表|技能 hub|list hubs?|list skill hubs?", m, re.I):
+        return {"mode": "tool", "tool": "list_skill_hubs", "args": {}}
+    if re.search(r"安装技能|添加技能|从.*hub.*添加|install skill|add skill", m, re.I):
+        if code:
+            return {"mode": "tool", "tool": "add_skill_from_hub", "args": {"code": code}}
+        return {"mode": "tool", "tool": "list_skill_hubs", "args": {}}
+    if re.search(r"有哪些技能|技能列表|已安装技能|list skills?|my skills", m, re.I):
+        return {"mode": "tool", "tool": "list_skills", "args": {}}
+    if re.search(r"mcp 服务|mcp 服务器|mcp server", m, re.I):
+        return {"mode": "tool", "tool": "list_mcp_servers", "args": {}}
+    if re.search(r"审计日志|操作日志|audit log", m, re.I):
+        return {"mode": "tool", "tool": "query_audit_logs", "args": {"limit": 20}}
+    if re.search(r"组件目录|节点类型|组件类型|注册中心|component registry|node types?", m, re.I):
+        return {"mode": "tool", "tool": "list_registry", "args": {}}
+    if re.search(r"有哪些角色|角色列表|list roles?", m, re.I):
+        return {"mode": "tool", "tool": "list_roles", "args": {}}
+    if re.search(r"成员组|用户组|list groups?|user groups?", m, re.I):
+        return {"mode": "tool", "tool": "list_user_groups", "args": {}}
+    if re.search(r"委托规则|代理审批|delegation", m, re.I):
+        return {"mode": "tool", "tool": "list_delegations", "args": {}}
+    if re.search(r"平台设置|系统设置|platform settings", m, re.I):
+        return {"mode": "tool", "tool": "get_platform_settings", "args": {}}
+    if re.search(r"模型服务|模型供应商|model provider|ai provider", m, re.I):
+        return {"mode": "tool", "tool": "list_ai_providers", "args": {}}
+    if re.search(r"知识文档|文档列表|kb documents?|list documents?", m, re.I):
+        return {"mode": "tool", "tool": "list_kb_documents", "args": {}}
+    if re.search(r"创建表单|新建表单|create form|new form", m, re.I):
+        return {"mode": "tool", "tool": "create_form",
+                "args": {"code": code or f"form_{db_code()}", "name": m[:24], "schema": []}}
+    if re.search(r"创建流程|新建流程|create workflow|new workflow", m, re.I):
+        return {"mode": "tool", "tool": "create_workflow",
+                "args": {"code": code or f"flow_{db_code()}", "name": m[:24]}}
+    return None
+
+
+def db_code() -> str:
+    import uuid
+    return uuid.uuid4().hex[:6]
+
+
 def plan(message: str, user: dict, context: dict | None = None) -> dict:
     """Classify a chat message into collect / tool / chat."""
     ctx = context or {}
@@ -189,6 +252,9 @@ def plan(message: str, user: dict, context: dict | None = None) -> dict:
     act = _act_plan(message)
     if act:
         return act
+    system = _system_plan(message)
+    if system:
+        return system
     m = (message or "").lower()
     for pattern, tool in _DIRECT_TOOLS:
         if re.search(pattern, m, re.I):
@@ -277,6 +343,44 @@ def summarize_direct(tool: str, result: dict, message: str) -> str:
         lines = [f"• #{n.get('id')} [{n.get('event')}] {n.get('title')} "
                  f"{'(未读)' if not n.get('read_at') else ''}" for n in items[:8]]
         return head + ("\n" + "\n".join(lines) if lines else ("\n（暂无）" if zh else "\n(none)"))
+    if tool == "my_capabilities":
+        domains = result.get("capability_groups") or {}
+        head = (f"当前角色可用 **{result.get('tool_count', 0)}** 项能力"
+                f"（系统共注册 {result.get('total_registered', 0)} 项），覆盖 "
+                f"{len(domains)} 个能力域：" if zh else
+                f"**{result.get('tool_count', 0)}** tools available to your role "
+                f"({result.get('total_registered', 0)} registered) across "
+                f"{len(domains)} domains:")
+        lines = [f"• `{k}` — {len(v)} 项工具" if zh else f"• `{k}` — {len(v)} tools"
+                 for k, v in domains.items()]
+        return head + ("\n" + "\n".join(lines) if lines else "")
+    if tool in {"search_skill_hub", "list_skills", "list_skill_hubs", "list_mcp_servers",
+                "list_roles", "list_user_groups", "list_delegations", "list_kb_documents",
+                "list_ai_providers", "query_audit_logs", "list_registry", "list_skill_files"}:
+        items = next((v for v in result.values() if isinstance(v, list)), [])
+        label = ("结果" if zh else "results")
+        head = f"{label}共 {result.get('total', len(items))} 条：" if zh else \
+            f"{result.get('total', len(items))} {label}:"
+        lines = []
+        for x in items[:8]:
+            if not isinstance(x, dict):
+                continue
+            name = x.get("name") or x.get("code") or x.get("title") or x.get("id") or "—"
+            desc = x.get("description") or x.get("status") or x.get("category") or ""
+            lines.append(f"• {name}" + (f" · {str(desc)[:48]}" if desc else ""))
+        if tool == "list_registry":
+            return (f"注册中心：组件 {result.get('component_count', 0)} 种、"
+                    f"节点 {result.get('node_count', 0)} 种，类目 "
+                    f"{', '.join(result.get('node_categories') or [])}。"
+                    if zh else f"Registry: {result.get('component_count', 0)} components, "
+                               f"{result.get('node_count', 0)} nodes.")
+        return head + ("\n" + "\n".join(lines) if lines else ("\n（暂无）" if zh else "\n(none)"))
+    if tool in {"create_form", "create_workflow", "install_skill", "add_skill_from_hub",
+                "update_skill", "write_skill_file", "create_mcp_server", "create_user_group",
+                "create_delegation", "register_custom_type", "manage_skill_hub",
+                "update_platform_settings", "sync_mcp_server", "notification_prefs"}:
+        return (f"操作已完成：{tool}（{result.get('created') or result.get('updated') or result.get('saved') or 'ok'}）。"
+                if zh else f"Done: {tool} ({'created' if result.get('created') else 'saved'}).")
     return (f"已查询：{tool} 返回 {len(result)} 个字段。" if zh else
             f"Query complete: {tool} returned {len(result)} fields.")
 

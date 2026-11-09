@@ -175,10 +175,6 @@ export interface ChatResponse {
   model: string; provider: string; orchestration: string; conversation_id: number; agent: string
   action_request?: ActionRequest | null
 }
-export interface ToolSpec {
-  name: string; description: string
-  inputSchema: { type: string; properties: Record<string, unknown>; required: string[] }
-}
 export interface McpSkill {
   id: number; code: string; name: string; type: string; endpoint?: string
   command?: string; enabled: boolean; auth_config: Record<string, unknown>
@@ -187,8 +183,9 @@ export interface McpSkill {
   status: 'installed' | 'disabled' | 'uninstalled' | 'error'
   version?: string; source?: string; description?: string
   manifest?: Record<string, unknown>; installed_at?: string
-  file_count?: number; server_id?: number | null
+  file_count?: number; server_id?: number | null; hub_id?: number | null
   server?: { id: number; code: string; name: string; transport: string; enabled: boolean } | null
+  hub?: { id: number; code: string; name: string; kind: string } | null
 }
 export interface SkillFile {
   id: number; skill_id: number; path: string; content?: string
@@ -379,4 +376,67 @@ export interface Bootstrap {
   skills?: { catalog_count: number; installed: number; types: string[]; statuses: string[] }
   ai?: { categories: string[]; providers: number; defaults: Record<string, unknown> }
   user: User
+}
+
+
+// ---- v5: declarative registry, skill hubs, visual editing, capabilities ----
+export interface ConfigField {
+  key: string; label: string; type: string
+  options?: (string | number)[]; default?: unknown
+  placeholder?: string; help?: string
+}
+export interface RegistryComponent {
+  type: string; group: string; label: string; width: number
+  caps: string[]; config_schema: ConfigField[]
+}
+export interface RegistryNode {
+  type: string; name: string; category: string; color: string
+  icon: string; runtime: string; config: string[]; config_schema: ConfigField[]
+}
+export interface RegistryPayload {
+  components: RegistryComponent[]; nodes: RegistryNode[]
+  component_groups: { code: string; label: string }[]
+  component_count: number; node_count: number
+  node_categories: string[]; human_nodes: string[]
+  custom: { components: Record<string, unknown>[]; nodes: Record<string, unknown>[] }
+  config_field_types: string[]
+}
+export interface SkillHub {
+  id: number; code: string; name: string; description: string
+  url: string | null; kind: 'builtin' | 'remote'; enabled: boolean
+  sync_interval_min: number; last_sync_at?: string | null
+  last_error?: string | null; skill_count: number
+  installed_count: number; created_by?: string
+  created_at: string; updated_at: string
+}
+export interface HubSkill {
+  code: string; name: string; type: string; version: string
+  description: string; endpoint?: string; command?: string
+  capabilities: string[]; category: string; author: string
+  downloads: number; tools: { name: string; description?: string }[]
+  tool_count: number; files: string[]; hub_id: number
+  hub_code: string; hub_name: string; installed: boolean
+}
+export interface HubSearchResult {
+  skills: HubSkill[]; total: number; hubs: string[]
+  errors: string[]; categories: string[]
+}
+export interface SkillPreview {
+  skill: McpSkill; manifest: Record<string, unknown>
+  capabilities: string[]; skill_md_html: string; readme_html: string
+  tools: { name: string; description?: string }[]
+  files: { path: string; size: number; language: string }[]
+  has_documentation: boolean
+}
+export interface ToolSpec {
+  name: string; description: string
+  inputSchema: { type: string; properties: Record<string, unknown>; required: string[] }
+  permission?: string | null; available?: boolean
+}
+export interface CapabilityDomain {
+  tools: ToolSpec[]; permissions: string[]; total: number; available: number
+}
+export interface CapabilityMatrix {
+  domains: Record<string, CapabilityDomain>
+  total_tools: number; available_tools: number; permission_driven: boolean
 }

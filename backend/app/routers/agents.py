@@ -59,9 +59,11 @@ def _out(row: dict) -> dict:
     return db.loads(row, "kb_ids", "skill_ids", "server_ids", "workflow_ids") or {}
 
 
-@router.get("/meta/runtime", summary="LLM / AgentScope runtime information")
-def runtime(_user: dict = Depends(deps.require("agent:read"))):
-    return {"runtime": llm.describe(), "tools": mcp_tools.list_tools(),
+@router.get("/meta/runtime", summary="LLM runtime, permission-filtered tools and capability matrix")
+def runtime(user: dict = Depends(deps.require("agent:read"))):
+    return {"runtime": llm.describe(),
+            "tools": mcp_tools.list_tools("catalog", user=user),
+            "capabilities": mcp_tools.capability_matrix(user),
             "modes": AGENT_MODES, "models": [settings.llm_model],
             "model_providers": model_providers.meta()}
 

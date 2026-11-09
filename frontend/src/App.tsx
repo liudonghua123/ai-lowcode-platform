@@ -11,6 +11,7 @@ import Knowledge from '@/pages/Knowledge'
 import Agents from '@/pages/Agents'
 import McpServers from '@/pages/McpServers'
 import Skills from '@/pages/Skills'
+import SkillHubs from '@/pages/SkillHubs'
 import ModelProviders from '@/pages/ModelProviders'
 import Rbac from '@/pages/Rbac'
 import AuthSettings from '@/pages/AuthSettings'
@@ -58,6 +59,7 @@ function AppRoutes() {
       <Route path="/agents" element={<Agents />} />
       <Route path="/mcp" element={<McpServers />} />
       <Route path="/skills" element={<Skills />} />
+      <Route path="/hubs" element={<SkillHubs />} />
       <Route path="/models" element={<ModelProviders />} />
       <Route path="/rbac" element={<Rbac />} />
       <Route path="/auth" element={<AuthSettings />} />

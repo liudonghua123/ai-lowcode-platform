@@ -15,7 +15,7 @@ uv run uvicorn app.main:app --reload --port 8000
 - REST: `http://localhost:8000/api/v1` · OpenAPI: `/docs` · MCP: `http://localhost:8000/mcp`
 - If `../frontend/dist` exists it is served at `/` (single-port mode).
 - The database at `data/platform.db` is created and seeded on first boot. Delete it to re-seed.
-- Smoke test: `python tests/smoke.py` (157 assertions, no external services required).
+- Smoke test: `python tests/smoke.py` (272 assertions, no external services required).
 
 ## Layout
 

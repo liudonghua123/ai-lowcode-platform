@@ -9,7 +9,7 @@
 | Machine-readable source | `GET /openapi.json`, interactive UI at `GET /docs` |
 | Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Security Architecture](security.md) · [Data Model](data-model.md) · [Domestic Form & Approval](form-flow-domestic.md) · [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md) |
 
-> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **134 个 OpenAPI 路径 / 174 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 24 个平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank/Vision 六类模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。**国内场景增强**：`/forms` 提供 44 种字段的目录、服务端法定校验、公式求值、版本快照、打印视图与 CSV 导出；`/workflows` 提供 14 种节点、会签/并行/汇聚的人工审批运行时、任务中心、转交/加签/撤回/催办、超时与委托，详见 [国内表单与审批规范](form-flow-domestic.md)。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
+> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **149 个 OpenAPI 路径 / 192 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 24 个平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank/Vision 六类模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。**国内场景增强**：`/forms` 提供 44 种字段的目录、服务端法定校验、公式求值、版本快照、打印视图与 CSV 导出；`/workflows` 提供 14 种节点、会签/并行/汇聚的人工审批运行时、任务中心、转交/加签/撤回/催办、超时与委托，详见 [国内表单与审批规范](form-flow-domestic.md)。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
 
 ## 1. Conventions
 
@@ -42,7 +42,7 @@
 }
 ```
 
-## 2. REST endpoints (134 paths)
+## 2. REST endpoints (149 paths)
 
 ### 2.1 Authentication & MFA — `/auth`
 
@@ -69,8 +69,8 @@ The designer palette, validators, operators, formula functions, permission modes
 
 | Methods | Path | Permission | Purpose |
 | --- | --- | --- | --- |
-| GET | `/forms/meta` | `form:read` | 44 field types in 5 groups, validators, operators, 19 functions, permission modes |
-| GET | `/forms/field-types` | `form:read` | Flat list of the 44 field types |
+| GET | `/forms/meta` | `form:read` | 66 field types in 6 groups, validators, operators, 19 functions, permission modes |
+| GET | `/forms/field-types` | `form:read` | Flat list of the 66 field types |
 | GET | `/forms/regions` | `form:read` | GB/T 2260 administrative-division sample for `region` fields |
 | GET, POST | `/forms` | `form:read` / `form:write` | List / create a definition (auto version snapshot) |
 | GET | `/forms/code/{code}` | `form:read` | Fetch by stable code |
@@ -94,7 +94,7 @@ Two runtimes coexist: `services/workflow_engine.py` keeps the original synchrono
 
 | Methods | Path | Permission | Purpose |
 | --- | --- | --- | --- |
-| GET | `/workflows/meta` | `workflow:read` | 14-node palette, 9 approver rules, 4 sign modes, empty/timeout policies, actions |
+| GET | `/workflows/meta` | `workflow:read` | 24-node palette, 9 approver rules, 4 sign modes, empty/timeout policies, actions |
 | GET | `/workflows/node-types` | `workflow:read` | Node palette metadata for the canvas |
 | GET, POST | `/workflows` | `workflow:read` / `workflow:write` | List / create a definition (auto version snapshot) |
 | GET, PUT, DELETE | `/workflows/{workflow_id}` | `workflow:read` / `workflow:write` | Read / update (auto snapshot) / delete |
@@ -177,23 +177,31 @@ A server declares `transport` (`builtin` / `http` / `sse` / `stdio`), `endpoint`
 
 | Methods | Path | Permission |
 | --- | --- | --- |
-| GET, POST | `/skills` | `mcp:read` / `mcp:write` |
-| GET | `/skills/catalog` | `mcp:read` |
-| POST | `/skills/install` | `mcp:write` |
-| GET, PUT, DELETE | `/skills/{skill_id}` | `mcp:read` / `mcp:write` |
-| POST | `/skills/{skill_id}/enable`, `/disable`, `/uninstall`, `/reinstall` | `mcp:write` |
-| POST | `/skills/{skill_id}/sync` | `mcp:write` (through `server_id`) |
-| GET | `/skills/{skill_id}/files` | `mcp:read` |
-| POST | `/skills/{skill_id}/files/reload` | `mcp:write` |
-| GET, PUT, DELETE | `/skills/{skill_id}/files/{path}` | `mcp:read` / `mcp:write` |
+| GET, POST | `/skills` | `skill:read` / `skill:write` |
+| GET | `/skills/catalog` | `skill:read` |
+| POST | `/skills/install` | `skill:write` |
+| GET, PUT, DELETE | `/skills/{skill_id}` | `skill:read` / `skill:write` |
+| POST | `/skills/{skill_id}/enable`, `/disable`, `/uninstall`, `/reinstall` | `skill:write` |
+| POST | `/skills/{skill_id}/sync` | `skill:write` (through `server_id`) |
+| GET | `/skills/{skill_id}/files` | `skill:read` |
+| POST | `/skills/{skill_id}/files/reload` | `skill:write` |
+| GET, PUT, DELETE | `/skills/{skill_id}/files/{path}` | `skill:read` / `skill:write` |
 
-A Skill has its own lifecycle, manifest and editable files (`SKILL.md`, `manifest.json`, `config.json`, `tools.json`, `README.md`) mirrored to `data/skills/<code>/`. `server_id` optionally links a skill to an MCP server; deleting a server sets the link to `NULL` without deleting the skill.
+A Skill has its own lifecycle, manifest and editable files (`SKILL.md`, `manifest.json`, `config.json`, `tools.json`, `README.md`) mirrored to `data/skills/<code>/`. `server_id` optionally links a skill to an MCP server (informational only); deleting a server sets the link to `NULL` without deleting the skill. `hub_id` / `source=hub:<code>` record the Hub a skill was installed from.
+
+| Methods | Path | Permission |
+| --- | --- | --- |
+| GET | `/skills/{skill_id}/preview` | `skill:read` |
+| PUT | `/skills/{skill_id}/manifest` | `skill:write` |
+| PUT | `/skills/{skill_id}/files/batch` | `skill:write` |
+
+`preview` returns the merged manifest, XSS-safe rendered `SKILL.md` / `README.md` HTML, declared tools and file inventory. `manifest` accepts `{"manifest": {...}}` and mirrors the result to `manifest.json`; `files/batch` accepts `{"files": [{"path": ..., "content": ...}]}` (max 50).
 
 ### 2.8 MCP transport, tools & call journal — `/mcp`
 
 | Methods | Path | Permission |
 | --- | --- | --- |
-| GET | `/mcp/tools` | `mcp:read` (20 platform tools + enabled-server tools) |
+| GET | `/mcp/tools` | `mcp:read` (55 permission-filtered platform tools + enabled-server tools) |
 | GET | `/mcp/status` | `mcp:read` |
 | GET | `/mcp/calls`, `/mcp/calls/stats`, `/mcp/calls/export`, `/mcp/calls/{call_id}` | `mcp:read` |
 | DELETE | `/mcp/calls` | `mcp:write` |
@@ -237,8 +245,29 @@ See [MCP Servers, Skills & Call Journal](mcp-skills.md) for the two registries, 
 | GET | `/audit/logs`, `/audit/actions` | `audit:read` |
 | GET | `/meta/health`, `/meta/version` | public |
 | GET | `/meta/bootstrap`, `/meta/stats` | authenticated / `dashboard:view` |
+| GET | `/meta/registry` | authenticated |
+| POST | `/meta/registry/components` | `form:write` |
+| POST | `/meta/registry/nodes` | `workflow:write` |
+| DELETE | `/meta/registry/{kind}/{code}` | `form:write` / `workflow:write` |
 | GET, PUT | `/settings` | `settings:read` / `settings:write` |
 | GET, PUT | `/settings/ai` | `settings:read` / `settings:write` |
+
+### 2.12 Extensible registry — `/meta/registry`
+
+`GET /meta/registry?lang=en|zh` returns 66 form components (6 groups) and 24 workflow nodes (6 categories), each with a resolved `config_schema`, plus `human_nodes`, `node_categories` and runtime `custom` specs. `POST /meta/registry/components` / `/nodes` accept `{"spec": {...}}` and persist to `settings.registry.custom_types`; `DELETE /meta/registry/{kind}/{code}` removes one. See [REG-001](extensible-registry-and-skill-hubs.md).
+
+### 2.13 Skill Hubs — `/skill-hubs`
+
+| Methods | Path | Permission |
+| --- | --- | --- |
+| GET | `/skill-hubs`, `/skill-hubs/search?q=&category=`, `/skill-hubs/stats` | `skill:read` |
+| POST | `/skill-hubs` | `skill:write` |
+| GET, PUT, DELETE | `/skill-hubs/{hub_id}` | `skill:read` / `skill:write` |
+| POST | `/skill-hubs/{hub_id}/sync` | `skill:write` |
+| GET | `/skill-hubs/{hub_id}/skills?q=`, `/skill-hubs/{hub_id}/skills/{code}` | `skill:read` |
+| POST | `/skill-hubs/{hub_id}/install` (`{"code": "pdf-extract"}`) | `skill:write` |
+
+Three hubs are seeded (2 offline builtin + 1 remote), exposing 13 searchable skills in 6 categories. `search` merges enabled hubs and returns `errors` for failed ones so an unreachable remote hub degrades to the builtin index.
 
 ## 3. MCP endpoint `/mcp`
 
@@ -249,7 +278,7 @@ Streamable HTTP, primary transport `fastmcp` 4.1.6 (`http_app(path="/mcp")`), bu
 | `initialize` | `protocolVersion`, `capabilities`, `clientInfo` | `protocolVersion`, `capabilities{tools,prompts,resources}`, `serverInfo`, `instructions` |
 | `notifications/initialized` | — | `202` |
 | `ping` | — | `{}` |
-| `tools/list` | — | 24 tools with `inputSchema` |
+| `tools/list` | — | 55 tools with `inputSchema` |
 | `tools/call` | `name`, `arguments` | `content`, `structuredContent`, `isError` |
 | `resources/list`, `resources/read`, `resources/templates/list` | `uri` | `platform://stats`, `platform://forms/{code}`, `platform://workflows/{code}` |
 | `prompts/list`, `prompts/get` | `name`, `arguments` | `analyze_workflow`, `answer_from_kb` |
@@ -264,7 +293,7 @@ curl -X POST http://localhost:8000/mcp \
        "params":{"name":"list_forms","arguments":{"status":"published"}}}'
 ```
 
-## 4. Platform tools (24)
+## 4. Platform tools (55)
 
 All input schemas are strict objects (`additionalProperties: false`).
 
@@ -294,22 +323,41 @@ All input schemas are strict objects (`additionalProperties: false`).
 | `withdraw_instance` | — | `instance_id`, `reason` | `workflow:run` | **yes** |
 | `urge_instance` | — | `instance_id`, `message` | `workflow:run` | **yes** |
 | `my_notifications` | — | `unread`, `limit` | (self context) | no |
-| `act_approval_task` | — | `action`, `instance_id`, `task_id`, `comment`, `assignee`, `return_to` | `workflow:run` | **yes** |
-| `withdraw_instance` | — | `instance_id`, `reason` | `workflow:run` | **yes** |
-| `urge_instance` | — | `instance_id`, `message` | `workflow:run` | **yes** |
-| `my_notifications` | — | `unread`, `limit` | (self context) | no |
-| `act_approval_task` | — | `action`, `instance_id`, `task_id`, `comment`, `assignee`, `return_to` | `workflow:run` | **yes** |
-| `withdraw_instance` | — | `instance_id`, `reason` | `workflow:run` | **yes** |
-| `urge_instance` | — | `instance_id`, `message` | `workflow:run` | **yes** |
-| `my_notifications` | — | `unread`, `limit` | (self context) | no |
-| `act_approval_task` | — | `action`, `instance_id`, `task_id`, `comment`, `assignee`, `return_to` | `workflow:run` | **yes** |
-| `withdraw_instance` | — | `instance_id`, `reason` | `workflow:run` | **yes** |
-| `urge_instance` | — | `instance_id`, `message` | `workflow:run` | **yes** |
-| `my_notifications` | — | `unread`, `limit` | (self context) | no |
+| `list_mcp_servers` | — | `enabled_only` | `mcp:read` | no |
+| `get_mcp_server` | `code` | — | `mcp:read` | no |
+| `create_mcp_server` | `code`, `name` | `transport`, `endpoint`, `command`, `description` | `mcp:write` | **yes** |
+| `sync_mcp_server` | `code` | — | `mcp:write` | **yes** |
+| `list_skills` | — | `status` | `skill:read` | no |
+| `get_skill` | `code` | — | `skill:read` | no |
+| `install_skill` | `code` | `name` | `skill:write` | **yes** |
+| `update_skill` | `code`, `patch` | — | `skill:write` | **yes** |
+| `list_skill_files` | `code` | — | `skill:read` | no |
+| `read_skill_file` | `code`, `path` | — | `skill:read` | no |
+| `write_skill_file` | `code`, `path`, `content` | — | `skill:write` | **yes** |
+| `list_skill_hubs` | — | — | `skill:read` | no |
+| `search_skill_hub` | — | `q`, `category` | `skill:read` | no |
+| `add_skill_from_hub` | `code` | `hub_code` | `skill:write` | **yes** |
+| `manage_skill_hub` | `hub_code` | `name`, `kind`, `url`, `enabled` | `skill:write` | **yes** |
+| `list_ai_providers` | — | — | `settings:read` | no |
+| `get_platform_settings` | — | — | `settings:read` | no |
+| `update_platform_settings` | `settings` | — | `settings:write` | **yes** |
+| `list_roles` | — | — | `rbac:read` | no |
+| `list_user_groups` | — | — | `rbac:read` | no |
+| `create_user_group` | `code`, `name` | `members`, `tags` | `rbac:write` | **yes** |
+| `list_delegations` | — | — | `rbac:read` | no |
+| `create_delegation` | `principal`, `agent` | `scope`, `ends_at` | `rbac:write` | **yes** |
+| `query_audit_logs` | — | `actor`, `action`, `limit` | `audit:read` | no |
+| `list_kb_documents` | — | `collection_code`, `limit` | `knowledge:read` | no |
+| `list_registry` | — | `kind` | (self context) | no |
+| `create_form` | `code`, `name` | `description`, `schema` | `form:write` | **yes** |
+| `create_workflow` | `code`, `name` | `description` | `workflow:write` | **yes** |
+| `register_custom_type` | `kind`, `spec` | — | `form:write` | **yes** |
+| `notification_prefs` | — | `action`, `events` | (self context) | no |
+| `my_capabilities` | — | — | (self context) | no |
 
 `list_tools("openai")` emits the same specs as OpenAI function-calling definitions for the ReAct loop. `mcp_tools.agent_tools(agent)` further filters this catalog to the tools declared by the agent's bound MCP servers (`server_ids`) and skills (`skill_ids`); enabled servers may add remote tool specs resolved through `mcp_servers.external_specs`. The fastmcp bridge tool `call_remote_tool` lets MCP clients reach those remote tools.
 
-The twelve self-service tools (13–24) are data-scope aware; see above and [NPF-001 §5](notifications-and-profile.md).
+The twelve self-service tools (13–24) are data-scope aware; see above and [NPF-001 §5](notifications-and-profile.md). Tools 25–55 come from `services/agent_admin_tools.py` and cover MCP servers, Skills, Hubs, settings, AI providers, RBAC (roles/groups/delegations), audit logs, knowledge documents, the component/node registry, form/workflow creation, custom type registration, notification preferences and `my_capabilities`. Every spec declares a permission; `tools/list`, `/mcp/tools` and `/agents/meta/runtime` filter by the caller (admin 55/55, seeded operator 35/55). `GET /agents/meta/runtime` also returns `capabilities`, a 10-domain matrix with per-tool `available` flags. See [REG-001](extensible-registry-and-skill-hubs.md) for the full catalogue.
 
 ## 5. Typical sequences
 
@@ -360,4 +408,4 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/workflows/in
 - All business endpoints are versioned under `/api/v1`; breaking changes require a new prefix.
 - MCP protocol version is negotiated during `initialize` (no hard-coded client requirement).
 - `/openapi.json` is the authoritative machine-readable contract; regenerate this table when routers change.
-- `backend/tests/smoke.py` (205 assertions) exercises the critical subset of these endpoints end-to-end, including the full domestic expense approval chain.
+- `backend/tests/smoke.py` (272 assertions) exercises the critical subset of these endpoints end-to-end, including the full domestic expense approval chain.

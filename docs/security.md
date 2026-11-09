@@ -8,7 +8,7 @@
 | Applies to | `ai-lowcode-platform` v0.1.0 |
 | Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Data Model](data-model.md) · [ADR-0006](adr/0006-rbac-mfa-and-sso.md) |
 
-> 中文摘要：本文档描述平台的身份、认证、授权与审计体系——HS256 JWT（access/mfa/enroll 三类令牌）、PBKDF2-SHA256 180k 轮密码哈希、RFC 6238 TOTP、WebAuthn Passkey、可按全局/角色/用户强制的 MFA 策略、26 项细粒度 RBAC 权限、`all`/`audit`/`self` 行级数据范围与只读审计管理员、CAS/OAuth2/OIDC/企业微信/钉钉五种 SSO，以及全量写操作审计。AI 工具调用复用同一套权限校验，详见 [AI 系统设计](ai-design.zh-CN.md)。
+> 中文摘要：本文档描述平台的身份、认证、授权与审计体系——HS256 JWT（access/mfa/enroll 三类令牌）、PBKDF2-SHA256 180k 轮密码哈希、RFC 6238 TOTP、WebAuthn Passkey、可按全局/角色/用户强制的 MFA 策略、28 项细粒度 RBAC 权限、`all`/`audit`/`self` 行级数据范围与只读审计管理员、CAS/OAuth2/OIDC/企业微信/钉钉五种 SSO，以及全量写操作审计。AI 工具调用复用同一套权限校验，详见 [AI 系统设计](ai-design.zh-CN.md)。
 
 ## 1. Identity and tokens
 
@@ -66,7 +66,7 @@ On login, a policy match returns a short-lived `mfa`/`enroll` token instead of a
 
 ### 4.1 Permission model
 
-26 fine-grained permissions:
+28 fine-grained permissions:
 
 ```
 dashboard:view
@@ -75,6 +75,7 @@ workflow:read, workflow:write, workflow:delete, workflow:run
 knowledge:read, knowledge:write, knowledge:delete
 agent:read, agent:write, agent:chat
 mcp:read, mcp:write, mcp:invoke
+skill:read, skill:write
 rbac:read, rbac:write
 auth:config, audit:read
 data:audit
@@ -127,9 +128,11 @@ supported scopes.
 The `data:audit` permission, the `auditor` builtin role (`AUDITOR_PERMISSIONS`
 contains only read/view/audit codes) and the demo user `diana / demo1234` are
 provisioned by the idempotent `ensure_security_upgrade()`, so databases created
-before this iteration upgrade in place. Totals: **26 permissions / 5 roles /
+before this iteration upgrade in place. Totals: **28 permissions / 5 roles /
 6 users**. See [WFP-001 §2](workflow-portal-and-data-scopes.md) and
 [ADR-0010](adr/0010-data-scopes-portal-and-agent-actions.md).
+
+v5 (ADR-0012) adds `skill:read` / `skill:write` so Skills and Skill Hubs are governed independently of MCP servers. `seed.ensure_permission_upgrade()` grants them to the `developer`, `operator`, `viewer` and `auditor` roles on existing databases; every `/skills` and `/skill-hubs` route now requires the matching `skill:*` permission.
 
 ## 5. SSO
 

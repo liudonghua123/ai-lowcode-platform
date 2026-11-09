@@ -28,7 +28,7 @@ The first release shipped a visual form designer and a synchronous DAG runner. I
 
 ### 2.1 Field catalog
 
-`backend/app/services/form_catalog.py` is the single source of truth for the designer palette, the validator and the renderer. **44 field types in 5 groups**:
+`backend/app/services/form_catalog.py` is the single source of truth for the designer palette, the validator and the renderer. **66 field types in 6 groups** (44 China-localized + 22 advanced/extensible):
 
 | Group | Types |
 | --- | --- |
@@ -75,7 +75,7 @@ Example from the shipped expense form: `total_amount` uses `TABLE_SUM("items", "
 
 ### 3.1 Node palette
 
-`backend/app/services/workflow_engine.py` now accepts **14 node types**: the original `start`, `end`, `form`, `condition`, `approval`, `ai`, `knowledge`, `http`, `notification`, plus `cc`, `parallel`, `join`, `delay`, `subflow`. `validate_graph()` additionally checks `join_mode` and `sign_mode` values, duplicate ids, missing edge endpoints, cycles and the single-start constraint.
+`backend/app/services/workflow_engine.py` now accepts **24 node types** from `services/registry.py`: the original 14 (`start`, `end`, `form`, `condition`, `approval`, `ai`, `knowledge`, `http`, `notification`, `cc`, `parallel`, `join`, `delay`, `subflow`) plus 10 v5 additions (`trigger`, `human_input`, `assign`, `script`, `data_write`, `db_query`, `ai_classify`, `skill`, `webhook`, `message`). `validate_graph()` additionally checks `join_mode` and `sign_mode` values, duplicate ids, missing edge endpoints, cycles and the single-start constraint.
 
 ### 3.2 Approver resolution
 
@@ -153,8 +153,9 @@ The smoke suite starts this workflow, approves the leader task, verifies that th
 | --- | --- |
 | `python3 -m ruff check app tests` | All checks passed |
 | `python3 tests/smoke.py` | **189 passed / 0 failed** at the time (41 new domestic assertions); 205 after ADR-0011 |
-| `pnpm typecheck` / `pnpm check:i18n` / `pnpm build` | pass / 824 en ↔ 824 zh, 0 missing / pass |
-| Runtime metadata | 134 OpenAPI paths, 174 route decorators, 29 tables, 20 indexes, 24 MCP tools |
+| `pnpm typecheck` / `pnpm check:i18n` / `pnpm build` | pass / 929 en ↔ 929 zh, 0 missing / pass |
+| Runtime metadata (at the time) | 134 OpenAPI paths, 174 route decorators, 29 tables, 20 indexes, 24 MCP tools |
+| Current registry (REG-001 / ADR-0012) | 149 OpenAPI paths, 192 route decorators, 30 tables, 21 indexes, 55 tools, 272 smoke assertions |
 
 ## 7. Constraints and boundaries
 

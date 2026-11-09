@@ -84,3 +84,4 @@ mutating tools are in `WRITE_TOOLS` and blocked for the read-only auditor.
   approve / notifications / withdraw intents — total **205 passed / 0 failed**.
 - Registry growth: **134 OpenAPI paths / 174 route decorators / 29 tables /
   20 indexes / 24 tools / 824 i18n keys per locale**.
+- Current registry after ADR-0012: **149 OpenAPI paths / 192 route decorators / 30 tables / 21 indexes / 55 tools / 929 i18n keys / 272 smoke assertions** — see [REG-001](extensible-registry-and-skill-hubs.md).

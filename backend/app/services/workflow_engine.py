@@ -3,12 +3,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import db
-from . import rag
+from . import registry
 
-NODE_TYPES = ["start", "end", "form", "condition", "approval", "ai",
-              "http", "knowledge", "notification", "cc", "parallel", "join",
-              "delay", "subflow"]
+# The palette is derived from the declarative registry so new node types
+# (including runtime-registered custom ones) need no changes in this module.
+NODE_TYPES = registry.node_codes()
+
+
+def allowed_node_types() -> list[str]:
+    """Dynamic whitelist — custom types registered at runtime are included."""
+    return registry.node_codes()
 
 
 def validate_graph(graph: dict) -> list[str]:
@@ -27,7 +31,7 @@ def validate_graph(graph: dict) -> list[str]:
     if not ends:
         errors.append("At least one end node is required")
     for n in nodes:
-        if n.get("type") not in NODE_TYPES:
+        if n.get("type") not in allowed_node_types():
             errors.append(f"Unknown node type: {n.get('type')}")
         if n.get("type") == "join" and (n.get("config") or {}).get("join_mode") not in \
                 (None, "all", "any"):
@@ -97,52 +101,12 @@ def evaluate_condition(config: dict, context: dict) -> bool:
 
 
 def _execute_node(node: dict, context: dict) -> dict:
-    """Return a partial context update produced by the node."""
-    ntype = node.get("type")
-    cfg = node.get("config") or {}
-    result: dict[str, Any] = {}
-    if ntype == "form":
-        form = db.q1("SELECT code,status FROM forms WHERE code=?", (cfg.get("form_code"),))
-        result["form"] = cfg.get("form_code")
-        result["form_found"] = bool(form)
-        if not form:
-            raise ValueError(f"Form not found: {cfg.get('form_code')}")
-        if form["status"] != "published":
-            raise ValueError(f"Form is not published: {cfg.get('form_code')}")
-    elif ntype == "approval":
-        # Demo engine auto-approves; plug a human task service here for production.
-        result["approval"] = {"role": cfg.get("approver_role") or "admin",
-                              "mode": cfg.get("mode") or "any", "decision": "approved"}
-    elif ntype == "ai":
-        summary = "; ".join(f"{k}={v}" for k, v in list(context.items())[:8])
-        prompt = cfg.get("prompt") or "Summarize the workflow context."
-        result["ai_summary"] = (
-            f"{prompt} Context: {summary}. "
-            "Assessment: request is complete and consistent with the configured rules."
-        )
-    elif ntype == "knowledge":
-        hits = rag.search(str(cfg.get("query") or context.get("query") or "policy"), top_k=3)
-        result["knowledge_hits"] = [{"title": h["title"], "score": h["score"]} for h in hits]
-    elif ntype == "http":
-        result["http"] = {"method": cfg.get("method") or "POST", "url": cfg.get("url"),
-                          "simulated": True, "status": 200}
-    elif ntype == "notification":
-        result["notification"] = {"channel": cfg.get("channel") or "in-app",
-                                  "template": cfg.get("template") or "", "delivered": True}
-    elif ntype == "cc":
-        result["cc"] = {"assignees": cfg.get("assignees") or [], "notified": True}
-    elif ntype == "parallel":
-        result["parallel"] = {"branches": len(
-            [e for e in (cfg.get("edges") or [])]) or cfg.get("branch_count", 2)}
-    elif ntype == "join":
-        result["join"] = {"mode": cfg.get("join_mode") or "all"}
-    elif ntype == "delay":
-        result["delay"] = {"hours": cfg.get("delay_hours") or 0, "simulated": True}
-    elif ntype == "subflow":
-        result["subflow"] = {"workflow_code": cfg.get("workflow_code"), "simulated": True}
-    elif ntype == "condition":
-        result["condition_result"] = evaluate_condition(cfg, context)
-    return result
+    """Return a partial context update produced by the node.
+
+    Execution is delegated to the declarative registry: adding a node type
+    never requires touching this engine (see ``registry.NODE_EXECUTORS``).
+    """
+    return registry.execute_node(node, context)
 
 
 def run(graph: dict, context: dict | None = None, actor: str = "system") -> dict:

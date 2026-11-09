@@ -168,7 +168,7 @@ async def _rpc_endpoint(request):
         elif method == "ping":
             result = {}
         elif method == "tools/list":
-            result = {"tools": mcp_tools.list_tools()}
+            result = {"tools": mcp_tools.list_tools(user=mcp_tools.current_user())}
         elif method == "tools/call":
             name = params.get("name")
             args = params.get("arguments") or {}

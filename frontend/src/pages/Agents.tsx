@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Bot, BookOpen, CheckCircle2, ChevronDown, ChevronRight, ClipboardList, Cpu,
-  Database, GitBranch, Package, MessageSquare, Plus, RefreshCw, Search, Send,
-  Server, Settings2, Sparkles, Trash2, Wrench,
+  Database, GitBranch, Lock, Package, MessageSquare, Plus, RefreshCw, Search, Send,
+  Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench,
 } from 'lucide-react'
 import { PageHeader, SectionTitle } from '@/components/PageHeader'
 import { SchemaForm } from '@/components/SchemaForm'
@@ -18,7 +18,7 @@ import { del, get, post, put } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type {
   ActionRequest, AgentActionResult, AgentBindings, AgentDef, BindableItem,
-  ChatResponse, ChatStep, ToolSpec,
+  CapabilityMatrix, ChatResponse, ChatStep, ToolSpec,
 } from '@/types'
 
 interface Message {
@@ -66,6 +66,8 @@ export default function Agents() {
   const [rightTab, setRightTab] = useState('config')
   const [runtime, setRuntime] = useState<any>(null)
   const [tools, setTools] = useState<ToolSpec[]>([])
+  const [capabilities, setCapabilities] = useState<CapabilityMatrix | null>(null)
+  const [capOpen, setCapOpen] = useState<Record<string, boolean>>({})
   const [bindings, setBindings] = useState<AgentBindings | null>(null)
   const [config, setConfig] = useState<BindingConfig | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -75,15 +77,18 @@ export default function Agents() {
   const [actionValues, setActionValues] = useState<Record<string, Record<string, unknown>>>({})
   const [actionErrors, setActionErrors] = useState<Record<string, Record<string, string>>>({})
   const [actionBusy, setActionBusy] = useState<string | null>(null)
+  const capPct = Math.round(((capabilities?.available_tools ?? 0)
+    / Math.max(1, capabilities?.total_tools ?? 1)) * 100)
 
   const load = async () => {
     try {
       const [a, rt, b] = await Promise.all([
         get<{ agents: AgentDef[] }>('/agents'),
-        get<{ runtime: any; tools: ToolSpec[] }>('/agents/meta/runtime'),
+        get<{ runtime: any; tools: ToolSpec[]; capabilities: CapabilityMatrix }>('/agents/meta/runtime'),
         get<AgentBindings>('/agents/meta/bindings'),
       ])
       setAgents(a.agents || []); setRuntime(rt.runtime); setTools(rt.tools || [])
+      setCapabilities(rt.capabilities || null)
       setBindings(b)
       return a.agents || []
     } catch { return [] }
@@ -346,6 +351,7 @@ export default function Agents() {
             { value: 'config', label: t('agents.config'), icon: <Settings2 className="h-3 w-3" /> },
             { value: 'bindings', label: t('agents.bindings'), icon: <Server className="h-3 w-3" />, count: selectedCount },
             { value: 'runtime', label: t('agents.runtime'), icon: <Cpu className="h-3 w-3" /> },
+            { value: 'capabilities', label: t('agents.capabilities'), icon: <ShieldCheck className="h-3 w-3" />, count: capabilities?.available_tools ?? 0 },
             { value: 'tools', label: t('agents.tools'), count: tools.length },
           ]} />
           {rightTab === 'config' && (config && selected ? <div className="space-y-3">
@@ -387,6 +393,69 @@ export default function Agents() {
             ].map(([k, v]) => <div key={String(k)} className="flex items-start justify-between gap-2 rounded-md border px-2.5 py-2">
               <span className="text-muted-foreground">{k}</span><span className="max-w-[60%] break-words text-right font-mono text-[10px]">{String(v ?? '—')}</span></div>)}
             <p className="pt-1 text-[10px] leading-relaxed text-muted-foreground">{t('agents.welcomeHint')}</p>
+          </div>}
+
+          {rightTab === 'capabilities' && <div className="scroll-thin max-h-[30rem] space-y-2 overflow-y-auto pr-0.5">
+            <div className="rounded-lg border bg-muted/40 p-2.5">
+              <p className="flex items-center gap-1.5 text-[11px] font-medium">
+                <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
+                <span className="min-w-0">{t('capabilities.permissionDriven')}</span>
+              </p>
+              <div className="mt-1.5 flex items-end justify-between gap-2">
+                <span className="text-[10px] text-muted-foreground">
+                  {capabilities?.available_tools ?? 0} / {capabilities?.total_tools ?? 0} {t('capabilities.tools')}
+                </span>
+                <span className="font-mono text-[10px] text-primary">{capPct}%</span>
+              </div>
+              <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${capPct}%` }} />
+              </div>
+              <p className="mt-1.5 break-words text-[10px] leading-relaxed text-muted-foreground">
+                {t('capabilities.legend')}
+              </p>
+            </div>
+            {Object.entries(capabilities?.domains || {}).map(([domain, d]) => (
+              <div key={domain} className="rounded-lg border p-2">
+                <button type="button"
+                  onClick={() => setCapOpen({ ...capOpen, [domain]: !capOpen[domain] })}
+                  className="flex w-full items-center justify-between gap-2 text-left">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {capOpen[domain]
+                      ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+                      : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                    <span className="truncate text-[11px] font-medium capitalize">{domain}</span>
+                  </span>
+                  <span className={cn('shrink-0 font-mono text-[10px]',
+                    d.available === d.total ? 'text-emerald-600 dark:text-emerald-400' : 'text-primary')}>
+                    {d.available}/{d.total}
+                  </span>
+                </button>
+                <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-primary/70"
+                    style={{ width: `${Math.round(d.available / Math.max(1, d.total) * 100)}%` }} />
+                </div>
+                {!!d.permissions.length && <div className="mt-1.5 flex flex-wrap gap-1">
+                  {d.permissions.map((p) => <Badge key={p} variant="outline" className="text-[9px]">{p}</Badge>)}
+                </div>}
+                {capOpen[domain] && <div className="mt-1.5 space-y-1">
+                  {d.tools.map((tool) => (
+                    <div key={tool.name} className="flex items-start gap-1.5 rounded border px-1.5 py-1">
+                      {tool.available
+                        ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" />
+                        : <Lock className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />}
+                      <div className="min-w-0 flex-1">
+                        <p className={cn('break-words font-mono text-[10px]',
+                          tool.available ? 'text-primary' : 'text-muted-foreground')}>{tool.name}</p>
+                        <p className="break-words text-[9px] leading-relaxed text-muted-foreground">{tool.description}</p>
+                        {tool.permission && <p className="font-mono text-[9px] text-muted-foreground">
+                          {tool.permission}{!tool.available && ` · ${t('capabilities.locked')}`}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>}
+              </div>
+            ))}
+            {!capabilities && <p className="py-6 text-center text-xs text-muted-foreground">—</p>}
           </div>}
 
           {rightTab === 'tools' && <div className="scroll-thin max-h-[30rem] space-y-1.5 overflow-y-auto">

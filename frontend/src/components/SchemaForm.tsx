@@ -35,7 +35,8 @@ const TEXT_INPUT: Record<string, string> = {
   idcard: 'text', uscc: 'text', bankcard: 'text', user: 'text', department: 'text',
   region: 'text', password: 'password', color: 'color',
 }
-const LAYOUT_TYPES = new Set(['description', 'divider', 'grid', 'tabs', 'collapse'])
+const LAYOUT_TYPES = new Set(['description', 'divider', 'grid', 'tabs', 'collapse',
+  'html', 'steps', 'button', 'iframe'])
 
 function optionsOf(field: FormField): { value: string; label: string }[] {
   return (field.options || []).map((o) => {
@@ -236,6 +237,82 @@ export function SchemaForm({ fields, value, onChange, formId, disabled, columns 
         } else if (f.type === 'signature' || f.type === 'image' || f.type === 'attachment'
           || f.type === 'ocr' || f.type === 'file') {
           control = <Input {...common} value={String(v ?? '')} placeholder={f.placeholder || key}
+            onChange={(e) => setValue(key, e.target.value)} />
+        } else if (f.type === 'nps') {
+          control = <div className="flex flex-wrap gap-1">
+            {Array.from({ length: 11 }, (_, i) => <button key={i} type="button" disabled={ro}
+              onClick={() => setValue(key, i)}
+              className={cn('h-7 w-7 rounded-md border text-[11px]',
+                Number(v) === i ? 'bg-primary text-primary-foreground' : 'hover:bg-accent')}>{i}</button>)}
+          </div>
+        } else if (f.type === 'segmented') {
+          control = <div className="flex flex-wrap gap-1 rounded-lg border p-1">
+            {optionsOf(f).map((o) => <button key={o.value} type="button" disabled={ro}
+              onClick={() => setValue(key, o.value)}
+              className={cn('rounded-md px-2.5 py-1 text-[11px]',
+                String(v ?? '') === o.value ? 'bg-primary text-primary-foreground' : 'hover:bg-accent')}>{o.label}</button>)}
+          </div>
+        } else if (f.type === 'tags') {
+          const arr = Array.isArray(v) ? v as string[] : []
+          control = <div className="space-y-1.5">
+            {!!arr.length && <div className="flex flex-wrap gap-1">{arr.map((x) =>
+              <Badge key={String(x)} variant="secondary" className="gap-1 text-[10px]">{String(x)}
+                <button type="button" disabled={ro} onClick={() => setValue(key, arr.filter((y) => y !== x))}
+                  className="text-destructive">×</button></Badge>)}</div>}
+            <Input {...common} placeholder={f.placeholder || 'Type and press Enter'}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault()
+                const el = e.currentTarget, text = el.value.trim()
+                if (text && !arr.includes(text)) setValue(key, [...arr, text])
+                el.value = '' } }} />
+          </div>
+        } else if (['daterange', 'timerange', 'slider_range'].includes(f.type)) {
+          const r = (v && typeof v === 'object') ? v as Record<string, unknown> : {}
+          const inputType = f.type === 'timerange' ? 'time' : f.type === 'daterange' ? 'date' : 'number'
+          control = <div className="grid grid-cols-2 gap-2">
+            <Input {...common} type={inputType} value={String(r.start ?? '')}
+              onChange={(e) => setValue(key, { ...r, start: e.target.value })} />
+            <Input {...common} type={inputType} value={String(r.end ?? '')}
+              onChange={(e) => setValue(key, { ...r, end: e.target.value })} />
+          </div>
+        } else if (f.type === 'gis') {
+          const g = (v && typeof v === 'object') ? v as Record<string, unknown> : {}
+          control = <div className="grid grid-cols-2 gap-2">
+            <Input {...common} placeholder="lng" value={String(g.lng ?? '')}
+              onChange={(e) => setValue(key, { ...g, lng: e.target.value })} />
+            <Input {...common} placeholder="lat" value={String(g.lat ?? '')}
+              onChange={(e) => setValue(key, { ...g, lat: e.target.value })} />
+          </div>
+        } else if (f.type === 'markdown' || f.type === 'code') {
+          control = <Textarea rows={compact ? 3 : 5} disabled={ro}
+            className={f.type === 'code' ? 'font-mono text-[11px]' : ''}
+            value={String(v ?? '')} placeholder={f.placeholder || (f.type === 'code' ? '// code' : '# Markdown')}
+            onChange={(e) => setValue(key, e.target.value)} />
+        } else if (f.type === 'percent' || f.type === 'currency') {
+          control = <div className="flex items-center gap-2">
+            <Input {...common} type="number" value={String(v ?? '')} placeholder={f.placeholder}
+              onChange={(e) => setValue(key, e.target.value === '' ? '' : Number(e.target.value))} />
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {f.type === 'percent' ? '%' : String((f as any).currency || 'CNY')}</span>
+          </div>
+        } else if (f.type === 'ai_autofill') {
+          control = <div className="flex gap-2">
+            <Input {...common} value={String(v ?? '')} placeholder={f.placeholder}
+              onChange={(e) => setValue(key, e.target.value)} />
+            <Button variant="outline" size="sm" type="button" disabled={ro} className="shrink-0"
+              onClick={() => setValue(key, `${String((f as any).prompt || 'AI generated')} · `
+                + Object.entries(value).filter(([k]) => k !== key).slice(0, 3)
+                  .map(([k, x]) => `${k}=${x}`).join(', '))}>AI</Button>
+          </div>
+        } else if (f.type === 'custom') {
+          control = <div className="space-y-1.5">
+            <p className="font-mono text-[10px] text-muted-foreground">
+              {String((f as any).component || 'unregistered custom component')}</p>
+            <Textarea rows={2} className="font-mono text-[10px]" disabled={ro}
+              value={typeof v === 'string' ? v : JSON.stringify(v ?? {}, null, 2)}
+              onChange={(e) => setValue(key, e.target.value)} />
+          </div>
+        } else if (['qrscan', 'camera', 'cron', 'hidden'].includes(f.type)) {
+          control = <Input {...common} value={String(v ?? '')} placeholder={f.placeholder || f.type}
             onChange={(e) => setValue(key, e.target.value)} />
         } else {
           const isNum = ['number', 'amount'].includes(f.type)
