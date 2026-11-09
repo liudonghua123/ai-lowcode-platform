@@ -205,7 +205,7 @@ export default function Agents() {
           {can('agent:write') && <Button size="sm" onClick={openCreate}><Plus className="h-4 w-4" />{t('agents.newAgent')}</Button>}
         </>} />
 
-      <div className="grid gap-4 lg:grid-cols-[14rem_minmax(0,1fr)_22rem]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[14rem_minmax(0,1fr)_22rem]">
         <Card><CardContent className="p-3">
           <SectionTitle>{t('agents.agentList')}</SectionTitle>
           <div className="space-y-1">
@@ -401,7 +401,7 @@ export default function Agents() {
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen} title={t('agents.createTitle')} size="lg"
         footer={<><Button variant="outline" onClick={() => setCreateOpen(false)}>{t('common.cancel')}</Button><Button onClick={create}>{t('common.create')}</Button></>}>
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div className="space-y-3">
             <Field label={t('agents.agentCode')}><Input value={createForm.code} onChange={(e) => setCreateForm({ ...createForm, code: e.target.value })} placeholder="my_agent" /></Field>
             <Field label={t('agents.agentName')}><Input value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} /></Field>

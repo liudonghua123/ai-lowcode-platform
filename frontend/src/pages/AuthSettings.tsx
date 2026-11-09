@@ -127,7 +127,7 @@ export default function AuthSettings() {
         </div>
       </>}
 
-      {tab === 'mfa' && policy && <div className="grid gap-4 lg:grid-cols-2">
+      {tab === 'mfa' && policy && <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card><CardContent className="p-4">
           <SectionTitle>{t('authSettings.mfaPolicy')}</SectionTitle>
           <p className="mb-4 text-xs text-muted-foreground">{t('authSettings.policyHint')}</p>

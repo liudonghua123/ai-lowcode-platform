@@ -146,7 +146,7 @@ export default function ModelProviders() {
           count: providers.filter((p) => p.category === c.code).length })),
       ]} />
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {visible.map((p) => {
           const Icon = CATEGORY_ICONS[p.category] || Zap
           const cat = categories.find((c) => c.code === p.category)

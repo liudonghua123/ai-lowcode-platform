@@ -58,6 +58,9 @@
 
   * { @apply border-border; }
   html { -webkit-tap-highlight-color: transparent; }
+  /* Mobile-first: grid children must shrink to their track instead of
+     stretching the page (prevents horizontal scrollbars on phones). */
+  .grid > * { min-width: 0; }
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-feature-settings: 'cv11', 'ss01';

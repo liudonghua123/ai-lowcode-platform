@@ -149,7 +149,7 @@ export default function Knowledge() {
         ))}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[14rem_minmax(0,1fr)_21rem]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[14rem_minmax(0,1fr)_21rem]">
         <Card><CardContent className="p-3">
           <SectionTitle>{t('knowledge.collections')}</SectionTitle>
           <div className="space-y-1">

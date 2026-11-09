@@ -332,7 +332,7 @@ export default function Workflows() {
       }} />}
 
       {view === 'designer' && (
-      <div className="grid gap-4 lg:grid-cols-[14rem_minmax(0,1fr)_19rem]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[14rem_minmax(0,1fr)_19rem]">
         {/* left */}
         <div className="space-y-4">
           <Card><CardContent className="p-3">

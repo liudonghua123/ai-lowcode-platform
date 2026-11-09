@@ -302,7 +302,7 @@ export default function Forms() {
             <Plus className="h-4 w-4" />{t('forms.newForm')}</Button>}
         </>} />
 
-      <div className="grid gap-4 lg:grid-cols-[15rem_minmax(0,1fr)_19rem]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[15rem_minmax(0,1fr)_19rem]">
         {/* Form list + palette */}
         <div className="space-y-4">
           <Card><CardContent className="p-3">

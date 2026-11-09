@@ -145,7 +145,7 @@ export default function Profile() {
         <StatCard icon={<Bell className="h-4 w-4" />} label={t('profile.unread')} value={overview.notifications_unread} />
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* basic info */}
         <Card>
           <CardHeader>

@@ -60,7 +60,7 @@ export default function Dashboard() {
         {cards.map((c, i) => <StatCard key={i} {...c} />)}
       </div>
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-3">
+      <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="flex-row items-center justify-between">
             <div><CardTitle>{t('dashboard.activityTrend')}</CardTitle><p className="mt-1 text-xs text-muted-foreground">{t('dashboard.last7days')}</p></div>
@@ -88,7 +88,7 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="flex-row items-center justify-between">
             <CardTitle>{t('dashboard.recentRuns')}</CardTitle>

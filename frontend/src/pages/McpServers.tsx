@@ -175,7 +175,7 @@ export default function McpServers() {
       {tab === 'servers' && <>
         <p className="mb-3 text-xs text-muted-foreground">{t('mcpServers.hint')}</p>
         {syncMessage && <div className="mb-3 rounded-lg border bg-muted/40 px-3 py-2 font-mono text-[11px]">{syncMessage}</div>}
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {servers.map((s) => (
             <Card key={s.id} className="card-hover"><CardContent className="p-4">
               <div className="flex items-start gap-2">
@@ -246,7 +246,7 @@ export default function McpServers() {
             <span className="mono-num text-sm font-semibold text-foreground">{s.value}</span></div>
             <p className="mt-1 text-[11px] text-muted-foreground">{s.label}</p></Card>)}
         </div>
-        <div className="mb-4 grid gap-3 lg:grid-cols-3">
+        <div className="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
           <Card className="p-4 lg:col-span-2"><h3 className="mb-3 text-xs font-semibold">{t('mcp.byTool')}</h3>
             <div className="space-y-2">{(callStats?.by_tool || []).slice(0, 8).map((x) => (
               <div key={x.name} className="flex items-center gap-2">

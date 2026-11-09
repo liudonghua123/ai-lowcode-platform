@@ -185,7 +185,7 @@ export default function Skills() {
       {tab === 'installed' && <>
         <p className="mb-3 text-xs text-muted-foreground">{t('skills.hint')}</p>
         {syncMessage && <div className="mb-3 rounded-lg border bg-muted/40 px-3 py-2 font-mono text-[11px]">{syncMessage}</div>}
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {skills.map((s) => (
             <Card key={s.id} className="card-hover"><CardContent className="p-4">
               <div className="flex items-start gap-2">
@@ -226,7 +226,7 @@ export default function Skills() {
 
       {tab === 'catalog' && <>
         <p className="mb-3 text-xs text-muted-foreground">{t('mcp.catalogHint')}</p>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {catalog.map((item) => (
             <Card key={item.code} className="card-hover"><CardContent className="p-4">
               <div className="flex items-start gap-2">
@@ -306,7 +306,7 @@ export default function Skills() {
               <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => void reloadFiles()} disabled={!can('mcp:write')}><RefreshCw className="h-3 w-3" />{t('mcp.reloadFiles')}</Button>
             </div>
           </div>
-          <div className="grid gap-3 md:grid-cols-[16rem_1fr]">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[16rem_1fr]">
             <div className="scroll-thin max-h-[26rem] space-y-1 overflow-y-auto rounded-lg border p-2">
               {files.map((f) => <button key={f.path} onClick={() => void selectFile(filesSkill!.id, f.path)}
                 className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] transition-colors ${activeFile === f.path ? 'bg-primary/10 text-primary' : 'hover:bg-accent'}`}>
