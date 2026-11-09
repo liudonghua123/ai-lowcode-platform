@@ -16,9 +16,11 @@ import { useI18n } from '@/i18n'
 import { useApp } from '@/store/AppContext'
 import { del, get, post, put } from '@/lib/api'
 import { cn, formatDate, safeParse, uid } from '@/lib/utils'
+import { SchemaForm } from '@/components/SchemaForm'
+import WorkflowPortal from '@/pages/WorkflowPortal'
 import type {
-  FlowMeta, FlowTask, WfEdge, WfGraph, WfNode, WorkflowDef, WorkflowInstance,
-  WorkflowVersion,
+  FlowMeta, FlowTask, FormDef, StartSchema, WfEdge, WfGraph, WfNode,
+  WorkflowDef, WorkflowInstance, WorkflowVersion,
 } from '@/types'
 
 const NODE_ICONS: Record<string, typeof Play> = {
@@ -51,6 +53,8 @@ export default function Workflows() {
   const canvasRef = useRef<HTMLDivElement>(null)
   const [searchParams] = useSearchParams()
 
+  const [view, setView] = useState<'portal' | 'designer'>(
+    searchParams.get('view') === 'designer' || !!searchParams.get('workflow') ? 'designer' : 'portal')
   const [workflows, setWorkflows] = useState<WorkflowDef[]>([])
   const [selected, setSelected] = useState<WorkflowDef | null>(null)
   const [nodes, setNodes] = useState<WfNode[]>([])
@@ -61,7 +65,7 @@ export default function Workflows() {
   const [connectFrom, setConnectFrom] = useState<string | null>(null)
   const [drag, setDrag] = useState<{ id: string; sx: number; sy: number; ox: number; oy: number } | null>(null)
   const [zoom, setZoom] = useState(1)
-  const [meta, setMeta] = useState({ name: '', description: '', status: 'draft' })
+  const [meta, setMeta] = useState({ name: '', description: '', status: 'draft', form_code: '' })
   const [rightTab, setRightTab] = useState('properties')
   const [saving, setSaving] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
@@ -71,14 +75,17 @@ export default function Workflows() {
   const [contextText, setContextText] = useState('{\n  "days": 2,\n  "leave_type": "Annual"\n}')
   const [runResult, setRunResult] = useState<any>(null)
   const [instances, setInstances] = useState<WorkflowInstance[]>([])
-  const [newWf, setNewWf] = useState({ code: '', name: '', description: '' })
+  const [newWf, setNewWf] = useState({ code: '', name: '', description: '', form_code: '' })
+  const [forms, setForms] = useState<FormDef[]>([])
+  const [startSchema, setStartSchema] = useState<StartSchema | null>(null)
+  const [startValues, setStartValues] = useState<Record<string, unknown>>({})
+  const [startErrors, setStartErrors] = useState<Record<string, string>>({})
   const [flowMeta, setFlowMeta] = useState<FlowMeta | null>(null)
   const [tasks, setTasks] = useState<FlowTask[]>([])
   const [taskStatus, setTaskStatus] = useState('pending')
   const [instanceDetail, setInstanceDetail] = useState<WorkflowInstance | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [startOpen, setStartOpen] = useState(false)
-  const [startFormText, setStartFormText] = useState('{\n  "applicant": "admin",\n  "department": "IT",\n  "mobile": "13800138000",\n  "claim_type": "差旅",\n  "items": [{ "qty": 2, "price": 3000 }],\n  "remark": "客户拜访"\n}')
   const [versionsOpen, setVersionsOpen] = useState(false)
   const [wfVersions, setWfVersions] = useState<WorkflowVersion[]>([])
   const [actDialog, setActDialog] = useState<{ task: FlowTask; action: string } | null>(null)
@@ -106,17 +113,38 @@ export default function Workflows() {
       setTasks(r.tasks || [])
     } catch { setTasks([]) }
   }
-  useEffect(() => { void load(); void loadMeta(); void loadTasks() }, [])
+  const loadForms = async () => {
+    try { const r = await get<{ forms: FormDef[] }>('/forms'); setForms(r.forms || []) }
+    catch { setForms([]) }
+  }
+  useEffect(() => { void load(); void loadMeta(); void loadTasks(); void loadForms() }, [])
   useEffect(() => { void loadMeta() }, [locale])
 
+  const openStart = async () => {
+    if (!selected) return
+    setStartValues({}); setStartErrors({}); setStartSchema(null)
+    try {
+      setStartSchema(await get<StartSchema>(`/workflows/${selected.id}/start-schema`))
+    } catch (e: any) { toast(e.message, 'error') }
+    setStartOpen(true)
+  }
   const startInstance = async () => {
     if (!selected) return
     try {
       await post<WorkflowInstance>(`/workflows/${selected.id}/start`,
-        { form_data: safeParse(startFormText, {}), create_submission: true })
+        { form_data: startValues, create_submission: true })
       setStartOpen(false); await loadInstances(selected.id); await loadTasks()
       setRightTab('tasks'); toast(t('workflows.startSuccess'), 'success')
-    } catch (e: any) { toast(e.message, 'error') }
+    } catch (e: any) {
+      const msg = String(e.message || '')
+      const errs: Record<string, string> = {}
+      for (const part of msg.split('; ')) {
+        const i = part.indexOf(':')
+        if (i > 0) errs[part.slice(0, i).trim()] = part.slice(i + 1).trim()
+      }
+      setStartErrors(errs)
+      toast(msg, 'error')
+    }
   }
   const openInstance = async (id: number) => {
     try {
@@ -166,7 +194,8 @@ export default function Workflows() {
   const select = (wf: WorkflowDef) => {
     setSelected(wf); setNodes(wf.graph?.nodes || []); setEdges(wf.graph?.edges || [])
     setActiveNode(wf.graph?.nodes?.[0]?.id || null); setActiveEdge(null)
-    setMeta({ name: wf.name, description: wf.description || '', status: wf.status })
+    setMeta({ name: wf.name, description: wf.description || '', status: wf.status,
+              form_code: wf.form_code || '' })
     setRunResult(null); void loadInstances(wf.id)
   }
 
@@ -175,7 +204,7 @@ export default function Workflows() {
     const code = searchParams.get('workflow')
     if (!code || !workflows.length) return
     const target = workflows.find((w) => w.code === code)
-    if (target && selected?.id !== target.id) select(target)
+    if (target) { setView('designer'); if (selected?.id !== target.id) select(target) }
   }, [workflows, searchParams, selected?.id])
 
   const addNode = (type: string) => {
@@ -223,7 +252,7 @@ export default function Workflows() {
     try {
       const r = await put<WorkflowDef>(`/workflows/${selected.id}`, {
         name: meta.name, description: meta.description, status: publish ? 'published' : meta.status,
-        graph: { nodes, edges },
+        form_code: meta.form_code || undefined, graph: { nodes, edges },
       })
       setSelected(r); await load(); toast(t('common.saved'), 'success')
     } catch (e: any) { toast(e.message, 'error') }
@@ -235,8 +264,10 @@ export default function Workflows() {
         { id: 'n1', type: 'start', name: 'Start', x: 60, y: 180, config: {} },
         { id: 'n2', type: 'end', name: 'End', x: 420, y: 180, config: {} }],
         edges: [{ id: 'e1', source: 'n1', target: 'n2' }] }
-      const wf = await post<WorkflowDef>('/workflows', { ...newWf, status: 'draft', graph })
-      setCreateOpen(false); setNewWf({ code: '', name: '', description: '' }); await load(); select(wf)
+      const wf = await post<WorkflowDef>('/workflows',
+        { ...newWf, form_code: newWf.form_code || undefined, status: 'draft', graph })
+      setCreateOpen(false)
+      setNewWf({ code: '', name: '', description: '', form_code: '' }); await load(); select(wf)
       toast(t('common.createdOk'), 'success')
     } catch (e: any) { toast(e.message, 'error') }
   }
@@ -286,10 +317,21 @@ export default function Workflows() {
     <div className="mx-auto max-w-[1700px]">
       <PageHeader icon={<GitBranch className="h-5 w-5" />} title={t('workflows.title')} subtitle={t('workflows.subtitle')}
         actions={<>
+          <Segmented value={view} onChange={setView} options={[
+            { value: 'portal', label: t('portal.viewPortal'), icon: <LayoutGrid className="h-3 w-3" /> },
+            { value: 'designer', label: t('portal.viewDesigner'), icon: <GitBranch className="h-3 w-3" /> },
+          ]} />
           <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="h-3.5 w-3.5" />{t('common.refresh')}</Button>
           {can('workflow:write') && <Button size="sm" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />{t('workflows.newWorkflow')}</Button>}
         </>} />
 
+      {view === 'portal' && <WorkflowPortal onDesign={(code) => {
+        setView('designer')
+        const target = workflows.find((w) => w.code === code)
+        if (target) select(target)
+      }} />}
+
+      {view === 'designer' && (
       <div className="grid gap-4 lg:grid-cols-[14rem_minmax(0,1fr)_19rem]">
         {/* left */}
         <div className="space-y-4">
@@ -353,7 +395,7 @@ export default function Workflows() {
                   <Button variant="outline" size="sm" loading={saving} onClick={() => save(false)} disabled={!can('workflow:write')}><Save className="h-3.5 w-3.5" />{t('common.save')}</Button>
                   <Button variant="outline" size="sm" onClick={() => void openVersions()}><History className="h-3.5 w-3.5" />{t('workflows.versions')}</Button>
                   <Button variant="outline" size="sm" onClick={() => setRightTab('tasks')}><ListTodo className="h-3.5 w-3.5" />{t('workflows.tasks')}</Button>
-                  <Button variant="outline" size="sm" onClick={() => setStartOpen(true)} disabled={!can('workflow:run')}><Send className="h-3.5 w-3.5" />{t('workflows.start')}</Button>
+                  <Button variant="outline" size="sm" onClick={() => void openStart()} disabled={!can('workflow:run')}><Send className="h-3.5 w-3.5" />{t('workflows.start')}</Button>
                   <Button size="sm" onClick={() => { setRunResult(null); setRunOpen(true) }} disabled={!can('workflow:run')}><Play className="h-3.5 w-3.5" />{t('common.run')}</Button>
                 </div>
               </div>
@@ -424,7 +466,7 @@ export default function Workflows() {
               { value: 'runs', label: t('workflows.instances'), count: instances.length },
             ]} />
             {rightTab === 'properties' && (
-              active ? <NodeProperties node={active} operators={operators} meta={flowMeta}
+              active ? <NodeProperties node={active} operators={operators} meta={flowMeta} forms={forms}
                   patch={patchNode} patchConfig={patchConfig} remove={removeNode} /> :
               activeE ? <EdgeProperties edge={activeE} onChange={(p) => setEdges((prev) => prev.map((e) => e.id === activeE.id ? { ...e, ...p } : e))}
                 onDelete={() => { setEdges((p) => p.filter((e) => e.id !== activeE.id)); setActiveEdge(null) }} /> :
@@ -500,6 +542,7 @@ export default function Workflows() {
           </CardContent>
         </Card>
       </div>
+      )}
 
       {/* dialogs */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen} title={t('workflows.createTitle')}
@@ -508,6 +551,11 @@ export default function Workflows() {
           <Field label={t('workflows.workflowCode')}><Input value={newWf.code} onChange={(e) => setNewWf({ ...newWf, code: e.target.value })} placeholder="my_flow" /></Field>
           <Field label={t('workflows.workflowName')}><Input value={newWf.name} onChange={(e) => setNewWf({ ...newWf, name: e.target.value })} /></Field>
           <Field label={t('common.description')}><Textarea value={newWf.description} onChange={(e) => setNewWf({ ...newWf, description: e.target.value })} /></Field>
+          <Field label={t('workflows.formCode')} hint={t('workflows.formCodeHint')}>
+            <Select value={newWf.form_code} onValueChange={(v) => setNewWf({ ...newWf, form_code: v })}
+              options={[{ value: '', label: t('common.none') },
+                ...forms.map((f) => ({ value: f.code, label: `${f.name} · ${f.code}` }))]} />
+          </Field>
         </div>
       </Dialog>
 
@@ -516,6 +564,11 @@ export default function Workflows() {
         <div className="space-y-3">
           <Field label={t('workflows.workflowName')}><Input value={meta.name} onChange={(e) => setMeta({ ...meta, name: e.target.value })} /></Field>
           <Field label={t('common.description')}><Textarea value={meta.description} onChange={(e) => setMeta({ ...meta, description: e.target.value })} /></Field>
+          <Field label={t('workflows.formCode')} hint={t('workflows.formCodeHint')}>
+            <Select value={meta.form_code} onValueChange={(v) => setMeta({ ...meta, form_code: v })}
+              options={[{ value: '', label: t('common.none') },
+                ...forms.map((f) => ({ value: f.code, label: `${f.name} · ${f.code}` }))]} />
+          </Field>
           <Field label={t('common.status')}><Select value={meta.status} onValueChange={(v) => setMeta({ ...meta, status: v })}
             options={(bootstrap?.workflow.statuses || ['draft', 'published', 'archived']).map((s) => ({ value: s, label: t(`common.${s}`) }))} /></Field>
         </div>
@@ -545,15 +598,22 @@ export default function Workflows() {
         </div>
       </Dialog>
 
-      <Dialog open={startOpen} onOpenChange={setStartOpen} title={t('workflows.startTitle', { name: selected?.name || '' })} size="md"
+      <Dialog open={startOpen} onOpenChange={setStartOpen} title={t('workflows.startTitle', { name: selected?.name || '' })} size="lg"
         footer={<><Button variant="outline" onClick={() => setStartOpen(false)}>{t('common.cancel')}</Button>
           <Button onClick={startInstance}><Send className="h-3.5 w-3.5" />{t('workflows.start')}</Button></>}>
         <div className="space-y-3">
           <p className="text-xs text-muted-foreground">{t('workflows.startHint')}</p>
-          <Field label={t('workflows.formData')}>
-            <Textarea className="font-mono text-xs" rows={9} value={startFormText}
-              onChange={(e) => setStartFormText(e.target.value)} /></Field>
-          {selected?.form_code && <Badge variant="muted">{selected.form_code}</Badge>}
+          {startSchema?.form && <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="muted">{startSchema.form.name}</Badge>
+            <span className="text-[10px] text-muted-foreground">
+              v{startSchema.form.version} · {startSchema.fields.length} {t('forms.fields').toLowerCase()}
+            </span>
+          </div>}
+          <SchemaForm fields={startSchema?.fields || []} value={startValues}
+            onChange={setStartValues} formId={startSchema?.form?.id} errors={startErrors} />
+          {!startSchema?.fields?.length &&
+            <p className="py-4 text-center text-xs text-muted-foreground">
+              {startSchema?.hint || t('common.noData')}</p>}
         </div>
       </Dialog>
 
@@ -668,8 +728,8 @@ function defaultConfig(type: string): Record<string, unknown> {
   } as Record<string, Record<string, unknown>>)[type] || {}
 }
 
-function NodeProperties({ node, operators, patch, patchConfig, remove, meta }: {
-  node: WfNode; operators: string[]; meta: FlowMeta | null
+function NodeProperties({ node, operators, patch, patchConfig, remove, meta, forms }: {
+  node: WfNode; operators: string[]; meta: FlowMeta | null; forms: FormDef[]
   patch: (id: string, p: Partial<WfNode>) => void
   patchConfig: (k: string, v: any) => void; remove: (id: string) => void
 }) {
@@ -713,9 +773,14 @@ function NodeProperties({ node, operators, patch, patchConfig, remove, meta }: {
         <Input value={node.name} onChange={(e) => patch(node.id, { name: e.target.value })} /></Field>
 
       {['start', 'form', 'subflow'].includes(node.type) && <Field label={t('workflows.formCode')}>
-        <Input value={cfg.form_code || cfg.workflow_code || ''}
-          placeholder={node.type === 'subflow' ? 'workflow code' : 'form code'}
-          onChange={(e) => patchConfig(node.type === 'subflow' ? 'workflow_code' : 'form_code', e.target.value)} />
+        {node.type === 'subflow' ? (
+          <Input value={cfg.workflow_code || ''} placeholder="workflow code"
+            onChange={(e) => patchConfig('workflow_code', e.target.value)} />
+        ) : (
+          <Select value={cfg.form_code || ''} onValueChange={(v) => patchConfig('form_code', v)}
+            options={[{ value: '', label: t('common.none') },
+              ...forms.map((f) => ({ value: f.code, label: `${f.name} · ${f.code}` }))]} />
+        )}
       </Field>}
       {node.type === 'form' && <Field label={t('workflows.assignee')}>
         <Input value={cfg.assignee || ''} onChange={(e) => patchConfig('assignee', e.target.value)} /></Field>}

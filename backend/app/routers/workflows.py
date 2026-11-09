@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from .. import db, deps
-from ..services import flow_runtime, form_rules, workflow_engine
+from ..services import data_scope, flow_runtime, form_rules, workflow_engine
 
 router = APIRouter(prefix="/workflows", tags=["Workflows"])
 
@@ -132,6 +132,14 @@ def _guard(call, *args, **kwargs):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _instance_readable(instance_id: int, user: dict) -> dict:
+    """404 (not 403) when an instance is outside the caller's data scope."""
+    row = db.q1("SELECT * FROM workflow_instances WHERE id=?", (instance_id,))
+    if not row or not data_scope.row_visible(user, "workflow_instances", row):
+        raise HTTPException(status_code=404, detail="Instance not found")
+    return dict(row)
+
+
 # --------------------------------------------------------------------------- #
 # Metadata (static paths must precede /{workflow_id})
 # --------------------------------------------------------------------------- #
@@ -146,11 +154,145 @@ def node_types(_user: dict = Depends(deps.require("workflow:read"))):
     return {"node_types": NODE_TYPES, "operators": OPERATORS}
 
 
+# --------------------------------------------------------------------------- #
+# Workflow portal: startable catalogue, my instances, public share links
+# --------------------------------------------------------------------------- #
+def _start_form(workflow: dict) -> tuple[str | None, dict | None, list[dict]]:
+    """Resolve the form bound to a workflow (definition or its start node)."""
+    graph = (db.loads(workflow, "graph") or {}).get("graph") or {}
+    start = next((n for n in (graph.get("nodes") or []) if n.get("type") == "start"), {})
+    code = (start.get("config") or {}).get("form_code") or workflow.get("form_code")
+    if not code:
+        return None, None, []
+    form = db.q1("SELECT * FROM forms WHERE code=?", (code,))
+    if not form:
+        return code, None, []
+    schema = (db.loads(form, "schema") or {}).get("schema") or []
+    return code, form, schema
+
+
+@router.get("/catalog", summary="Startable workflow catalogue for the portal (with share links)")
+def workflow_catalog(status: str = Query("published"),
+                     user: dict = Depends(deps.require("workflow:read"))):
+    sql, args = "SELECT * FROM workflows WHERE 1=1", []
+    if status != "all":
+        sql += " AND status=?"
+        args.append(status)
+    rows = db.q(sql + " ORDER BY id DESC", tuple(args))
+    out = []
+    for r in rows:
+        fcode, form, schema = _start_form(r)
+        graph = (db.loads(r, "graph") or {}).get("graph") or {}
+        out.append({
+            "id": r["id"], "code": r["code"], "name": r["name"],
+            "description": r["description"], "status": r["status"], "version": r["version"],
+            "form_code": fcode, "form_name": form["name"] if form else None,
+            "form_status": form["status"] if form else None,
+            "field_count": len(schema), "node_count": len(graph.get("nodes") or []),
+            "startable": r["status"] == "published",
+            "requires_auth": True, "start_path": f"/#/start/{r['code']}",
+        })
+    return {"workflows": out, "total": len(out),
+            "scope": data_scope.scope_for(user, "workflow_instances")}
+
+
+def _instance_rows(user: dict, *, status: str | None, q: str | None,
+                   workflow_id: int | None, date_from: str | None,
+                   date_to: str | None, limit: int) -> list[dict]:
+    frag, scope_args = data_scope.owner_clause(user, "workflow_instances")
+    sql = "SELECT * FROM workflow_instances WHERE 1=1"
+    args: list = list(scope_args)
+    if frag:
+        sql += " AND " + frag
+    if status and status != "all":
+        sql += " AND status=?"
+        args.append(status)
+    if workflow_id:
+        sql += " AND workflow_id=?"
+        args.append(workflow_id)
+    if date_from:
+        sql += " AND started_at>=?"
+        args.append(date_from)
+    if date_to:
+        sql += " AND started_at<=?"
+        args.append(date_to + "T23:59:59" if len(date_to) == 10 else date_to)
+    if q:
+        sql += " AND (form_data LIKE ? OR form_code LIKE ?)"
+        args += [f"%{q}%"] * 2
+    return db.q(sql + " ORDER BY id DESC LIMIT ?", (*args, min(limit, 300)))
+
+
+@router.get("/mine/instances", summary="My launched instances with status / text / date filters")
+def my_instances(status: str | None = None, q: str | None = None,
+                 workflow_id: int | None = None, date_from: str | None = None,
+                 date_to: str | None = None, limit: int = 100,
+                 user: dict = Depends(deps.require("workflow:read"))):
+    rows = _instance_rows(user, status=status, q=q, workflow_id=workflow_id,
+                          date_from=date_from, date_to=date_to, limit=limit)
+    wfs = {r["id"]: r for r in db.q("SELECT id,code,name FROM workflows")}
+    counts = {r["instance_id"]: r for r in db.q(
+        "SELECT instance_id, COUNT(*) AS c, "
+        "SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS p "
+        "FROM flow_tasks GROUP BY instance_id")}
+    out = []
+    for r in rows:
+        d = db.loads(r, "context", "logs", "graph", "form_data", "current_nodes", "variables") or {}
+        wf = wfs.get(r["workflow_id"], {})
+        d["workflow_code"] = wf.get("code")
+        d["workflow_name"] = wf.get("name")
+        d["task_count"] = int((counts.get(r["id"]) or {}).get("c") or 0)
+        d["pending_count"] = int((counts.get(r["id"]) or {}).get("p") or 0)
+        out.append(d)
+    return {"instances": out, "total": len(out),
+            "scope": data_scope.scope_for(user, "workflow_instances")}
+
+
+@router.get("/mine/stats", summary="Portal counters for the current user")
+def my_stats(user: dict = Depends(deps.require("workflow:read"))):
+    frag, args = data_scope.owner_clause(user, "workflow_instances")
+    rows = db.q("SELECT status, COUNT(*) AS c FROM workflow_instances WHERE 1=1" +
+                (f" AND {frag}" if frag else "") + " GROUP BY status", tuple(args))
+    by_status = {r["status"]: r["c"] for r in rows}
+    if data_scope.can_read_all(user, "flow_tasks"):
+        pending = int(db.scalar("SELECT COUNT(*) FROM flow_tasks WHERE status='pending'") or 0)
+    else:
+        pending = int(db.scalar("SELECT COUNT(*) FROM flow_tasks WHERE status='pending' "
+                                "AND assignee=?", (user["username"],)) or 0)
+    return {"by_status": by_status, "total": sum(by_status.values()),
+            "running": by_status.get("running", 0), "pending_approvals": pending,
+            "startable_workflows": int(db.scalar(
+                "SELECT COUNT(*) FROM workflows WHERE status='published'") or 0)}
+
+
+@router.get("/share-info/{code}",
+            summary="Public launch info: share URL that requires authentication")
+def share_info(code: str, request: Request):
+    from urllib.parse import quote
+    row = db.q1("SELECT * FROM workflows WHERE code=?", (code,))
+    if not row or row["status"] != "published":
+        raise HTTPException(status_code=404, detail="Workflow not found or not published")
+    fcode, form, _ = _start_form(row)
+    start_path = f"/#/start/{code}"
+    return {
+        "workflow_id": row["id"],
+        "code": code, "name": row["name"], "description": row["description"],
+        "form_code": fcode, "form_name": form["name"] if form else None,
+        "requires_auth": True, "start_path": start_path,
+        "login_path": f"/#/login?next={quote('/start/' + code)}",
+        "share_url": str(request.base_url).rstrip("/") + start_path,
+        "note": "Opening this link without a session redirects to sign-in, then returns "
+                "here with the start form. Prefill is optional via ?data=<base64 json>.",
+    }
+
+
 @router.get("/tasks", summary="Approval task center: pending / done tasks")
 def task_center(status: str = Query("pending"), assignee: str | None = None,
                 all_users: bool = False, limit: int = 100,
                 user: dict = Depends(deps.require("workflow:read"))):
-    who = assignee or (None if all_users else user["username"])
+    if data_scope.can_read_all(user, "flow_tasks"):
+        who = assignee or (None if all_users else user["username"])
+    else:
+        who = user["username"]  # self-scope users cannot query other people's tasks
     sql = "SELECT * FROM flow_tasks WHERE 1=1"
     args: list = []
     if status != "all":
@@ -180,21 +322,21 @@ def sweep_timeouts(user: dict = Depends(deps.require("workflow:run")), request: 
 
 
 @router.get("/instances/{instance_id}", summary="Get a workflow instance with tasks and timeline")
-def get_instance(instance_id: int, _user: dict = Depends(deps.require("workflow:read"))):
-    row = db.q1("SELECT * FROM workflow_instances WHERE id=?", (instance_id,))
-    if not row:
-        raise HTTPException(status_code=404, detail="Instance not found")
+def get_instance(instance_id: int, user: dict = Depends(deps.require("workflow:read"))):
+    _instance_readable(instance_id, user)
     return flow_runtime.instance_view(instance_id)
 
 
 @router.get("/instances/{instance_id}/tasks", summary="Tasks of an instance")
-def instance_tasks(instance_id: int, _user: dict = Depends(deps.require("workflow:read"))):
-    return {"tasks": flow_runtime.instance_view(instance_id)["tasks"], "total": len(
-        flow_runtime.instance_view(instance_id)["tasks"])}
+def instance_tasks(instance_id: int, user: dict = Depends(deps.require("workflow:read"))):
+    _instance_readable(instance_id, user)
+    tasks = flow_runtime.instance_view(instance_id)["tasks"]
+    return {"tasks": tasks, "total": len(tasks)}
 
 
 @router.get("/instances/{instance_id}/timeline", summary="Approval timeline of an instance")
-def instance_timeline(instance_id: int, _user: dict = Depends(deps.require("workflow:read"))):
+def instance_timeline(instance_id: int, user: dict = Depends(deps.require("workflow:read"))):
+    _instance_readable(instance_id, user)
     view = flow_runtime.instance_view(instance_id)
     return {"instance_id": instance_id, "status": view["status"],
             "logs": view["logs"], "current_nodes": view["current_nodes"]}
@@ -202,7 +344,8 @@ def instance_timeline(instance_id: int, _user: dict = Depends(deps.require("work
 
 @router.get("/instances/{instance_id}/form-schema", summary="Form schema with node field permissions")
 def instance_form_schema(instance_id: int, node_id: str | None = None,
-                         _user: dict = Depends(deps.require("workflow:read"))):
+                         user: dict = Depends(deps.require("workflow:read"))):
+    _instance_readable(instance_id, user)
     return _guard(flow_runtime.form_schema_for_node, instance_id, node_id)
 
 
@@ -291,6 +434,8 @@ def create_workflow(body: WorkflowIn, user: dict = Depends(deps.require("workflo
                     request: Request = None):
     if db.q1("SELECT id FROM workflows WHERE code=?", (body.code,)):
         raise HTTPException(status_code=409, detail="Workflow code already exists")
+    if body.form_code and not db.q1("SELECT id FROM forms WHERE code=?", (body.form_code,)):
+        raise HTTPException(status_code=400, detail=f"Linked form not found: {body.form_code}")
     errors = workflow_engine.validate_graph(body.graph.model_dump())
     if errors:
         raise HTTPException(status_code=400, detail="Invalid graph: " + "; ".join(errors))
@@ -315,6 +460,10 @@ def update_workflow(workflow_id: int, body: WorkflowPatch,
                     user: dict = Depends(deps.require("workflow:write")), request: Request = None):
     row = _wf_or_404(workflow_id)
     patch = body.model_dump(exclude_none=True)
+    if patch.get("form_code") and not db.q1("SELECT id FROM forms WHERE code=?",
+                                            (patch["form_code"],)):
+        raise HTTPException(status_code=400,
+                            detail=f"Linked form not found: {patch['form_code']}")
     if "graph" in patch:
         errors = workflow_engine.validate_graph(patch["graph"])
         if errors:
@@ -395,6 +544,34 @@ def validate_workflow(workflow_id: int, _user: dict = Depends(deps.require("work
             "nodes": len(graph.get("nodes") or []), "edges": len(graph.get("edges") or [])}
 
 
+@router.get("/{workflow_id}/start-schema",
+            summary="Dynamic start form schema (replaces raw JSON submission)")
+def start_schema(workflow_id: int,
+                 platform: str = Query("desktop", pattern="^(desktop|mobile)$"),
+                 user: dict = Depends(deps.require("workflow:read"))):
+    row = _wf_or_404(workflow_id)
+    form_code, form, schema = _start_form(row)
+    graph = (db.loads(row, "graph") or {}).get("graph") or {}
+    base = {
+        "workflow": {"id": row["id"], "code": row["code"], "name": row["name"],
+                     "status": row["status"], "version": row["version"],
+                     "node_count": len(graph.get("nodes") or [])},
+        "start_path": f"/#/start/{row['code']}", "requires_auth": True,
+        "platform": platform,
+    }
+    if not form:
+        return {**base, "form": None, "fields": [], "permissions": {}, "columns": 2,
+                "hint": "This workflow has no bound form; it can be started directly."}
+    rendered = form_rules.render_schema(schema, platform=platform)
+    return {
+        **base,
+        "form": {"id": form["id"], "code": form["code"], "name": form["name"],
+                 "version": form["version"], "status": form["status"],
+                 "field_count": len(schema)},
+        **rendered,
+    }
+
+
 @router.post("/{workflow_id}/start", status_code=201,
              summary="Start a long-running approval instance")
 def start_workflow(workflow_id: int, body: StartIn,
@@ -445,9 +622,11 @@ def run_workflow(workflow_id: int, body: RunIn,
 
 @router.get("/{workflow_id}/instances", summary="List instances of a workflow")
 def list_instances(workflow_id: int, limit: int = 50, status: str | None = None,
-                   _user: dict = Depends(deps.require("workflow:read"))):
+                   user: dict = Depends(deps.require("workflow:read"))):
     _wf_or_404(workflow_id)
-    sql, args = "SELECT * FROM workflow_instances WHERE workflow_id=?", [workflow_id]
+    frag, scope_args = data_scope.owner_clause(user, "workflow_instances")
+    sql = "SELECT * FROM workflow_instances WHERE workflow_id=?" + (f" AND {frag}" if frag else "")
+    args: list = [workflow_id, *scope_args]
     if status:
         sql += " AND status=?"
         args.append(status)

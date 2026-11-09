@@ -10,6 +10,8 @@ export interface User {
   id: number; username: string; email?: string; display_name?: string; avatar?: string
   status: string; dept?: string; role_ids: number[]; roles?: string[]
   permissions: string[]; role_codes: string[]; is_admin: boolean
+  is_auditor?: boolean; data_scope?: 'all' | 'audit' | 'self'
+  data_scopes?: Record<string, unknown>
   otp_enabled?: boolean; passkey_enabled?: boolean; passkey_count?: number
   provider?: string; last_login_at?: string; created_at?: string
 }
@@ -171,6 +173,7 @@ export interface ChatStep { tool: string; arguments: Record<string, unknown>; re
 export interface ChatResponse {
   answer: string; steps: ChatStep[]; sources: { doc_id: number; title: string; score: number }[]
   model: string; provider: string; orchestration: string; conversation_id: number; agent: string
+  action_request?: ActionRequest | null
 }
 export interface ToolSpec {
   name: string; description: string
@@ -277,6 +280,51 @@ export interface AuditLog {
   id: number; actor: string; action: string; resource?: string
   detail: Record<string, unknown>; ip?: string; level: string; created_at: string
 }
+/* ---- Workflow portal / dynamic start form / agent action requests ---- */
+export interface StartSchema {
+  workflow: { id: number; code: string; name: string; status: string; version: number; node_count: number }
+  form: { id: number; code: string; name: string; version: number; status: string; field_count: number } | null
+  fields: FormField[]
+  permissions: Record<string, string>
+  columns: number
+  platform: string
+  start_path: string
+  requires_auth: boolean
+  hint?: string
+}
+export interface WorkflowCatalogItem {
+  id: number; code: string; name: string; description?: string; status: string
+  version: number; form_code: string | null; form_name: string | null
+  form_status: string | null; field_count: number; node_count: number
+  startable: boolean; requires_auth: boolean; start_path: string
+}
+export interface MyInstance extends WorkflowInstance {
+  workflow_code?: string; workflow_name?: string
+  task_count?: number; pending_count?: number
+}
+export interface PortalStats {
+  by_status: Record<string, number>; total: number; running: number
+  pending_approvals: number; startable_workflows: number
+}
+export interface ShareInfo {
+  workflow_id: number
+  code: string; name: string; description?: string
+  form_code: string | null; form_name: string | null
+  requires_auth: boolean; start_path: string; login_path: string
+  share_url: string; note: string
+}
+export interface ActionRequest {
+  id: string; kind: 'start_workflow' | 'submit_form'; code: string
+  workflow_id?: number; title: string; description: string
+  schema: FormField[]; form_id: number | null; form_code: string | null
+  submit_label: string; endpoint: string
+}
+export interface AgentActionResult {
+  ok: boolean; kind: string; code: string; answer: string
+  instance_id?: number; submission_id?: number; status?: string
+  pending?: FlowTask[]; conversation_id?: number; agent?: string
+}
+
 export interface Bootstrap {
   app: { name: string; version: string; api_prefix: string; license: string }
   i18n: { locales: string[]; default: string }

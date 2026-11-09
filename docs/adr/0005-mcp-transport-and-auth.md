@@ -18,7 +18,7 @@ Additionally, MCP clients are external processes — identity must be attached w
 
 ## Decision
 
-- **Primary transport:** `mcp_server._build_fastmcp()` registers the 12 registry tools as typed `@mcp.tool` functions and returns `mcp.http_app(path="/mcp", stateless_http=..., json_response=...)`.
+- **Primary transport:** `mcp_server._build_fastmcp()` registers the 20 registry tools as typed `@mcp.tool` functions and returns `mcp.http_app(path="/mcp", stateless_http=..., json_response=...)`.
 - **Lifespan integration:** `main.py` enters `async with mcp_http_app.lifespan(mcp_http_app): yield` inside the FastAPI lifespan, then extends `app.router.routes` with the returned routes.
 - **Fallback transport:** `build_mcp()` catches any fastmcp failure and returns a dependency-free JSON-RPC ASGI route implementing `initialize`, `ping`, `tools/list`, `tools/call`, `resources/*`, `prompts/*` and notifications. MCP keeps working even without the optional SDK.
 - **Authentication:** `MCPAuthASGIMiddleware` is a **pure ASGI** wrapper (not `BaseHTTPMiddleware`) that, for `/mcp` requests, decodes an optional bearer token, loads the user and calls `mcp_tools.bind_user(user)`. Tool calls then pass through `PERMISSION_MAP`. Anonymous read-only use remains possible.
@@ -50,4 +50,4 @@ Additionally, MCP clients are external processes — identity must be attached w
 
 ## Verification
 
-Live checks: `POST /mcp` `initialize` → 200 with capabilities + `serverInfo`, `tools/list` → 12 tools, `tools/call` → RBAC-checked result; `/docs` and `/openapi.json` still work; SPA catch-all protects `/mcp`. Smoke suite asserts all three MCP methods plus REST invoke and skill sync.
+Live checks: `POST /mcp` `initialize` → 200 with capabilities + `serverInfo`, `tools/list` → 20 tools, `tools/call` → RBAC-checked result; `/docs` and `/openapi.json` still work; SPA catch-all protects `/mcp`. Smoke suite asserts all three MCP methods plus REST invoke and skill sync.

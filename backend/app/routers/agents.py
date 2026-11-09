@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from .. import db, deps
 from ..config import settings
-from ..services import llm, mcp_servers, mcp_tools, model_providers, skill_catalog
+from ..services import agent_intents, llm, mcp_servers, mcp_tools, model_providers, skill_catalog
 
 router = APIRouter(prefix="/agents", tags=["AI Agents"])
 
@@ -46,6 +46,13 @@ class ChatIn(BaseModel):
     message: str = Field(..., min_length=1)
     conversation_id: int | None = None
     context: dict | None = None
+
+
+class ActionIn(BaseModel):
+    kind: str
+    code: str
+    data: dict = Field(default_factory=dict)
+    conversation_id: int | None = None
 
 
 def _out(row: dict) -> dict:
@@ -211,7 +218,34 @@ async def chat(agent_id: int, body: ChatIn, user: dict = Depends(deps.require("a
     mcp_tools.bind_user(user)
     mcp_tools.bind_context(source="agent", transport="react", method="agent.tool",
                            actor=user["username"], request_id=db.uid()[:12])
-    result = await llm.run_agent(agent, body.message, history, user)
+    decision = agent_intents.plan(body.message, user, body.context)
+    model = agent.get("model") or settings.llm_model
+    if decision["mode"] == "collect":
+        # No side effects yet: the chat UI renders a dynamic form from the
+        # request schema and calls /actions once the user submits it.
+        result = {
+            "answer": decision["answer"], "steps": [], "sources": [], "model": model,
+            "provider": "intent", "tools_available": len(mcp_tools.agent_tools(agent, "openai") or []),
+            "bound_servers": agent.get("server_ids") or [],
+            "orchestration": "intent + schema-driven dynamic form",
+            "action_request": decision["action_request"],
+        }
+    elif decision["mode"] == "tool":
+        try:
+            tool_result = mcp_tools.call_tool(decision["tool"], decision["args"], user)
+        except Exception as exc:
+            tool_result = {"error": str(exc)}
+        result = {
+            "answer": agent_intents.summarize_direct(decision["tool"], tool_result, body.message),
+            "steps": [{"tool": decision["tool"], "arguments": decision["args"],
+                       "result": tool_result}],
+            "sources": [], "model": model, "provider": "scoped-tool",
+            "tools_available": len(mcp_tools.agent_tools(agent, "openai") or []),
+            "bound_servers": agent.get("server_ids") or [],
+            "orchestration": "scoped self-service tool",
+        }
+    else:
+        result = await llm.run_agent(agent, body.message, history, user)
     messages = history + [
         {"role": "user", "content": body.message},
         {"role": "assistant", "content": result["answer"]},
@@ -223,5 +257,40 @@ async def chat(agent_id: int, body: ChatIn, user: dict = Depends(deps.require("a
             "agent_id": agent_id, "title": body.message[:60], "messages": messages,
             "user_id": user["username"], "created_at": db.now()})
     deps.audit(user["username"], "agent.chat", f"agent:{agent['code']}",
-               {"steps": len(result["steps"]), "provider": result["provider"]}, request=request)
+               {"steps": len(result["steps"]), "provider": result["provider"],
+                "intent": decision["mode"]}, request=request)
     return {**result, "conversation_id": conversation_id, "agent": agent["code"]}
+
+
+@router.post("/{agent_id}/actions",
+             summary="Execute an action collected by a schema-driven dynamic form")
+def agent_action(agent_id: int, body: ActionIn,
+                 user: dict = Depends(deps.require("agent:chat")), request: Request = None):
+    row = db.q1("SELECT * FROM agents WHERE id=?", (agent_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent = _out(row)
+    if agent.get("status") != "active":
+        raise HTTPException(status_code=400, detail="Agent is inactive")
+    mcp_tools.bind_user(user)
+    mcp_tools.bind_context(source="agent", transport="action", method="agent.action",
+                           actor=user["username"], request_id=db.uid()[:12])
+    try:
+        result = agent_intents.execute(body.kind, body.code, body.data, user, agent)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cid = body.conversation_id
+    entry = [{"role": "user", "content": f"[dynamic form submitted] {body.code}"},
+             {"role": "assistant", "content": result["answer"]}]
+    if cid and db.q1("SELECT id FROM conversations WHERE id=?", (cid,)):
+        conv = db.q1("SELECT * FROM conversations WHERE id=?", (cid,))
+        if conv.get("user_id") in (user["username"], None) or user["is_admin"]:
+            history = (db.loads(conv, "messages") or {}).get("messages") or []
+            db.update("conversations", cid, {"messages": history + entry})
+    else:
+        cid = db.insert("conversations", {
+            "agent_id": agent_id, "title": f"[form] {body.code}", "messages": entry,
+            "user_id": user["username"], "created_at": db.now()})
+    deps.audit(user["username"], "agent.action", f"agent:{agent['code']}",
+               {"kind": body.kind, "code": body.code, "ok": result["ok"]}, request=request)
+    return {**result, "conversation_id": cid, "agent": agent["code"]}

@@ -152,11 +152,17 @@ openai-compatible / openai / agentscope ──(当 LLM_API_KEY)─────�
 
 `_intent_tool_calls()` 把中英双语表述映射为工具调用，每轮最多 3 个（列表类正则特意加锚，避免多意图误触发）。`_summarize_tool_result()` 把最近 3 条工具消息渲染成中英可读摘要，对 `forms`、`workflows`、`records`、`hits`、`instance_id`、`submission_id`、`users` 与平台统计分别设有分支。
 
+### 5.4 意图规划与 schema 驱动的信息收集（`services/agent_intents.py`）
+
+在 ReAct 循环之前，`plan(message, user, context)` 先对每轮消息分类：**`collect`**（「帮我创建一个 xxx 流程」）返回带动态 `FormField[]` schema 的 `action_request`，schema 来自绑定表单的 `form_rules.render_schema()`，且**不产生任何副作用**；**`tool`**（「我是谁」「我的权限」「查询我的审批及进度」「我发起的流程」「有哪些可发起的流程」）调用一个自身范围工具并生成自然语言摘要；**`chat`** 回退到 ReAct / RAG。查询类措辞在创建意图之前被拦截，避免「我发起的流程」被误判为创建流程。
+
+`POST /agents/{id}/chat` 返回 `action_request`，前端渲染 `SchemaForm` 卡片，提交到 `POST /agents/{id}/actions` 后才真正执行并追加到同一会话。这与认证分享页保持一致的「规划 → 收集 → 确认 → 执行」边界。详见 [WFP-001 §5](workflow-portal-and-data-scopes.md)。
+
 ## 6. 统一工具注册表（`services/mcp_tools.py`）
 
 ### 6.1 声明
 
-12 个工具各只声明一次：`{name, description, inputSchema}`，其中 `inputSchema` 为严格 JSON Schema 对象（`additionalProperties: false`、显式 `required`）。`PERMISSION_MAP` 绑定工具与 RBAC 权限，`HANDLERS` 绑定工具与纯 Python 函数。
+20 个工具（原有 12 个 + 新增 8 个自助/schema 工具）各只声明一次：`{name, description, inputSchema}`，其中 `inputSchema` 为严格 JSON Schema 对象（`additionalProperties: false`、显式 `required`）。`PERMISSION_MAP` 绑定工具与 RBAC 权限，`HANDLERS` 绑定工具与纯 Python 函数。
 
 | 工具 | 所需权限 | 效果 |
 | --- | --- | --- |
@@ -167,6 +173,9 @@ openai-compatible / openai / agentscope ──(当 LLM_API_KEY)─────�
 | `list_collections`、`search_knowledge` | `knowledge:read` | 读取集合 / BM25 检索 |
 | `list_users` | `rbac:read` | 读取用户（`password_hash` 恒为 `null`） |
 | `get_stats` | `dashboard:view` | 读取平台计数 |
+| `who_am_i`、`my_approvals`、`my_submissions`、`my_instances` | 自身上下文 | **仅绑定用户**的身份 / 审批 / 提交 / 实例 |
+| `list_startable_workflows`、`get_form_schema` | `workflow:read`、`form:read` | 门户目录与动态 `FormField[]` schema |
+| `start_workflow_instance`、`submit_form_data` | `workflow:run`、`form:submit` | **写入** — 自身范围动作执行 |
 
 ### 6.2 分派与身份隔离
 
@@ -261,7 +270,7 @@ $$\text{IDF}(t)=\ln\left(1+\frac{N-\text{df}(t)+0.5}{\text{df}(t)+0.5}\right)$$
 | 方法 | 结果 |
 | --- | --- |
 | `initialize` | `protocolVersion`（协商）、`capabilities{tools,prompts,resources}`、`serverInfo{name,version}`、`instructions` |
-| `tools/list` | 来自 `TOOL_SPECS` 的 12 个工具，外加 `call_remote_tool` 桥接工具 |
+| `tools/list` | 来自 `TOOL_SPECS` 的 20 个工具，外加 `call_remote_tool` 桥接工具 |
 | `tools/call` | 经 RBAC 校验的 handler 结果，包装为 MCP content |
 | `resources/list` | `platform://stats`、`platform://forms/{code}`、`platform://workflows/{code}` |
 | `prompts/list` | `analyze_workflow`、`answer_from_kb` |
@@ -335,7 +344,7 @@ MCP 服务与技能是**独立实体，各自拥有路由、数据表与生命�
 
 ## 13. 测试覆盖
 
-`backend/tests/smoke.py` 含专门的 AI 断言：中英混合 RAG 检索、文档自动索引、query 智能体返回 `sources`、act/hybrid 智能体执行 ≥2 次真实工具调用、工具结果摘要、`/mcp` 的 `tools/list` 与 `tools/call`、REST `/mcp/invoke`、第三方技能同步，以及工具调用的 RBAC 拒绝。合计 **157 passed / 0 failed**（调用日记与技能生命周期新增 63 项断言：记录、统计、CSV 导出、清空、目录、安装、文件增删查改、路径穿越、启用/禁用/卸载/重装）。
+`backend/tests/smoke.py` 含专门的 AI 断言：中英混合 RAG 检索、文档自动索引、query 智能体返回 `sources`、act/hybrid 智能体执行 ≥2 次真实工具调用、工具结果摘要、`/mcp` 的 `tools/list` 与 `tools/call`、REST `/mcp/invoke`、第三方技能同步，以及工具调用的 RBAC 拒绝。合计 **189 passed / 0 failed**（调用日记与技能生命周期新增 63 项断言：记录、统计、CSV 导出、清空、目录、安装、文件增删查改、路径穿越、启用/禁用/卸载/重装）。
 
 ## 14. 生产升级路径
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from .. import db, deps
+from ..services import data_scope
 
 router = APIRouter(prefix="/audit", tags=["Audit"])
 
@@ -11,8 +12,10 @@ router = APIRouter(prefix="/audit", tags=["Audit"])
 @router.get("/logs", summary="Query audit logs")
 def logs(actor: str | None = None, action: str | None = None, level: str | None = None,
          q: str | None = None, limit: int = 100,
-         _user: dict = Depends(deps.require("audit:read"))):
-    sql, args = "SELECT * FROM audit_logs WHERE 1=1", []
+         user: dict = Depends(deps.require("audit:read"))):
+    frag, scope_args = data_scope.owner_clause(user, "audit_logs")
+    sql = "SELECT * FROM audit_logs WHERE 1=1" + (f" AND {frag}" if frag else "")
+    args: list = list(scope_args)
     for field, value in (("actor", actor), ("action", action), ("level", level)):
         if value:
             sql += f" AND {field}=?"

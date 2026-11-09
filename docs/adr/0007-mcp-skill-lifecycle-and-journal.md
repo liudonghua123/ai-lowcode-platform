@@ -55,4 +55,4 @@ Constraints: single-process SQLite deployment, no new services, no migration fra
 
 ## Validation
 
-`backend/tests/smoke.py` (157 assertions) verifies: journal records MCP and REST sources, failed invocations are recorded as `error`, stats/aggregates/timeline, CSV export, detail lookup and clearing; catalog listing; install creates ≥4 files; file read/create/update; path traversal rejection; enable/disable; uninstall removes all files; reinstall restores defaults; and permanent delete. Live MCP `initialize` / `tools/list` / `tools/call` remain 200 after the middleware change.
+`backend/tests/smoke.py` (189 assertions) verifies: journal records MCP and REST sources, failed invocations are recorded as `error`, stats/aggregates/timeline, CSV export, detail lookup and clearing; catalog listing; install creates ≥4 files; file read/create/update; path traversal rejection; enable/disable; uninstall removes all files; reinstall restores defaults; and permanent delete. Live MCP `initialize` / `tools/list` / `tools/call` remain 200 after the middleware change.

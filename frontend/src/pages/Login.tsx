@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import QRCode from 'qrcode'
 import {
   ArrowRight, Bot, CheckCircle2, Fingerprint, GitBranch, KeyRound, Languages,
@@ -31,6 +31,10 @@ export default function Login() {
   const { login } = useApp()
   const { toast } = useToast()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  // Whitelist in-app relative targets only (block "//evil.com" open redirects).
+  const rawNext = searchParams.get('next')
+  const next = rawNext && rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/'
 
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('admin123')
@@ -55,7 +59,9 @@ export default function Login() {
   const finish = async (token?: string) => {
     if (!token) throw new Error('No token returned')
     await login(token)
-    navigate('/', { replace: true })
+    sessionStorage.removeItem('ailp_next')
+    // Return to the auth-gated share link instead of always landing on "/".
+    navigate(next, { replace: true })
   }
   const authHeader = (token: string) => ({ auth: false, headers: { Authorization: `Bearer ${token}` } })
 
@@ -136,6 +142,9 @@ export default function Login() {
           { state: r.state, code: 'demo-code' }, { auth: false })
         await finish(cb.access_token)
       } else {
+        // Real SSO round-trips through a full page reload, so persist the share
+        // target; SsoCallback restores it after the provider redirects back.
+        if (next !== '/') sessionStorage.setItem('ailp_next', next)
         window.location.href = r.url
       }
     } catch (err: any) { setError(err?.message || 'SSO failed'); setLoading(false) }
@@ -218,6 +227,11 @@ export default function Login() {
 
           {step === 'login' && (
             <>
+              {rawNext && <div className="mb-4 flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] text-primary">
+                <LockKeyhole className="h-3.5 w-3.5 shrink-0" />
+                <span className="shrink-0">{t('login.redirectHint')}</span>
+                <span className="ml-auto truncate font-mono">{next}</span>
+              </div>}
               <h2 className="text-2xl font-semibold tracking-tight">{t('login.title')}</h2>
               <p className="mt-1 text-sm text-muted-foreground">{t('login.subtitle')}</p>
               <form onSubmit={handleSubmit} className="mt-6 space-y-4">

@@ -41,6 +41,8 @@ def health(request: Request):
                           "SELECT COUNT(*) FROM flow_tasks WHERE status='pending'") or 0),
                       "org_units": int(db.scalar("SELECT COUNT(*) FROM org_units") or 0)},
         "database": "sqlite",
+        "security": {"data_scopes": ["all", "audit", "self"],
+                     "auditor_role": bool(db.q1("SELECT id FROM roles WHERE code='auditor'"))},
     }
 
 
@@ -51,9 +53,10 @@ def version():
 
 
 @router.get("/stats", summary="Dashboard statistics")
-def stats(_user: dict = Depends(deps.require("dashboard:view"))):
+def stats(user: dict = Depends(deps.require("dashboard:view"))):
     # Internal dashboard aggregation — not an MCP invocation, skip the journal.
-    data = mcp_tools.call_tool("get_stats", {}, journal=False)
+    # Pass the caller so self-scope users only see their own business rows.
+    data = mcp_tools.call_tool("get_stats", {}, user=user, journal=False)
     data["recent_instances"] = db.q(
         "SELECT id,workflow_id,status,started_by,started_at FROM workflow_instances "
         "ORDER BY id DESC LIMIT 5")

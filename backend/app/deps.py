@@ -28,12 +28,18 @@ def _load_user(user_id: Any) -> dict | None:
         marks = ",".join("?" for _ in set(permission_ids))
         permissions += [p["code"] for p in db.q(
             f"SELECT code FROM permissions WHERE id IN ({marks})", tuple(set(permission_ids)))]
+    from .services import data_scope
+    admin = "admin" in role_codes or "*" in permissions
     user.update({
         "roles": roles,
         "role_codes": role_codes,
         "permissions": sorted(set(permissions)),
-        "is_admin": "admin" in role_codes or "*" in permissions,
+        "is_admin": admin,
+        "is_auditor": not admin and ("auditor" in role_codes or "data:audit" in permissions),
+        "data_scope": "all" if admin else
+                      ("audit" if "auditor" in role_codes or "data:audit" in permissions else "self"),
     })
+    user["data_scopes"] = data_scope.describe(user)
     return user
 
 
@@ -77,6 +83,14 @@ def require(permission: str):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission denied: {permission}",
+            )
+        # Defence in depth: the audit administrator is a read-only role even if
+        # somebody later grants it a write permission code by mistake.
+        action = permission.rsplit(":", 1)[-1]
+        if user.get("data_scope") == "audit" and action not in {"read", "view", "audit", "chat"}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="The audit administrator role is read-only",
             )
         return user
     return _checker

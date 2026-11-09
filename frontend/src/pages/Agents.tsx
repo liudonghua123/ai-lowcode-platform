@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  Bot, BookOpen, ChevronDown, ChevronRight, Cpu, Database, GitBranch, Package,
-  MessageSquare, Plus, RefreshCw, Search, Send, Server, Settings2, Sparkles,
-  Trash2, Wrench,
+  Bot, BookOpen, CheckCircle2, ChevronDown, ChevronRight, ClipboardList, Cpu,
+  Database, GitBranch, Package, MessageSquare, Plus, RefreshCw, Search, Send,
+  Server, Settings2, Sparkles, Trash2, Wrench,
 } from 'lucide-react'
 import { PageHeader, SectionTitle } from '@/components/PageHeader'
+import { SchemaForm } from '@/components/SchemaForm'
 import {
   Badge, Button, Card, CardContent, EmptyState, Field, Input, Label, Select,
   Switch, Textarea,
@@ -15,7 +16,10 @@ import { useI18n } from '@/i18n'
 import { useApp } from '@/store/AppContext'
 import { del, get, post, put } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import type { AgentBindings, AgentDef, BindableItem, ChatResponse, ChatStep, ToolSpec } from '@/types'
+import type {
+  ActionRequest, AgentActionResult, AgentBindings, AgentDef, BindableItem,
+  ChatResponse, ChatStep, ToolSpec,
+} from '@/types'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -23,12 +27,15 @@ interface Message {
   steps?: ChatStep[]
   sources?: { doc_id: number; title: string; score: number }[]
   model?: string; provider?: string
+  actionRequest?: ActionRequest | null
+  actionDone?: boolean
 }
 
 const SUGGESTIONS = [
-  'What is the leave policy? / 请假制度是什么？',
-  'List all forms',
-  'Run the leave approval workflow',
+  '查询我的审批及进度 / Show my approvals and progress',
+  '我是谁，有哪些权限？ / Who am I and what can I do?',
+  '帮我创建一个费用报销流程 / Create an expense claim workflow',
+  '有哪些可发起的流程？ / Which workflows can I start?',
   'Show platform statistics',
 ]
 
@@ -65,6 +72,9 @@ export default function Agents() {
   const [createForm, setCreateForm] = useState<any>({})
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [expanded, setExpanded] = useState<Record<number, boolean>>({})
+  const [actionValues, setActionValues] = useState<Record<string, Record<string, unknown>>>({})
+  const [actionErrors, setActionErrors] = useState<Record<string, Record<string, string>>>({})
+  const [actionBusy, setActionBusy] = useState<string | null>(null)
 
   const load = async () => {
     try {
@@ -88,6 +98,7 @@ export default function Agents() {
       kb_ids: [...(a.kb_ids || [])], skill_ids: [...(a.skill_ids || [])],
       server_ids: [...(a.server_ids || [])], workflow_ids: [...(a.workflow_ids || [])] })
     setMessages([]); setConversationId(null)
+    setActionValues({}); setActionErrors({})
   }
 
   // Deep link: /#/agents?agent=general_copilot opens a specific agent.
@@ -106,9 +117,38 @@ export default function Agents() {
       const r = await post<ChatResponse>(`/agents/${selected.id}/chat`, { message: content, conversation_id: conversationId })
       setConversationId(r.conversation_id)
       setMessages((p) => [...p, { role: 'assistant', content: r.answer, steps: r.steps,
-        sources: r.sources, model: r.model, provider: r.provider }])
+        sources: r.sources, model: r.model, provider: r.provider,
+        actionRequest: r.action_request || null }])
     } catch (e: any) { toast(e.message, 'error'); setMessages((p) => [...p, { role: 'assistant', content: `Error: ${e.message}` }]) }
     finally { setSending(false) }
+  }
+
+  // Execute the action collected by a schema-driven dynamic form. The chat
+  // endpoint only PLANNED the request; /actions creates the real side effect.
+  const submitAction = async (m: Message, index: number) => {
+    const ar = m.actionRequest
+    if (!ar || !selected || actionBusy) return
+    const data = actionValues[ar.id] || {}
+    setActionBusy(ar.id)
+    setActionErrors((p) => ({ ...p, [ar.id]: {} }))
+    try {
+      const r = await post<AgentActionResult>(`/agents/${selected.id}/actions`, {
+        kind: ar.kind, code: ar.code, data, conversation_id: conversationId,
+      })
+      if (r.conversation_id) setConversationId(r.conversation_id)
+      setMessages((p) => p.map((x, i) => i === index ? { ...x, actionDone: true } : x)
+        .concat({ role: 'assistant', content: r.answer, provider: 'action' }))
+      toast(t('agents.actionFormDone'), 'success')
+    } catch (e: any) {
+      const msg = String(e?.message || '')
+      const errs: Record<string, string> = {}
+      for (const part of msg.split('; ')) {
+        const j = part.indexOf(':')
+        if (j > 0) errs[part.slice(0, j).trim()] = part.slice(j + 1).trim()
+      }
+      setActionErrors((p) => ({ ...p, [ar.id]: errs }))
+      toast(msg, 'error')
+    } finally { setActionBusy(null) }
   }
 
   const openCreate = () => {
@@ -223,6 +263,42 @@ export default function Agents() {
                         m.role === 'user' ? 'bg-primary text-primary-foreground' : 'border bg-card')}>
                         <div className="whitespace-pre-wrap break-words">{m.content}</div>
                       </div>
+                      {m.role === 'assistant' && m.actionRequest && (
+                        <div className="mt-2 rounded-xl border border-primary/30 bg-primary/[0.03] p-3 text-left shadow-sm animate-scale-in">
+                          <div className="flex items-start gap-2">
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                              <ClipboardList className="h-3.5 w-3.5" /></span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-semibold">{m.actionRequest.title}</p>
+                              <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                                {m.actionRequest.description}</p>
+                            </div>
+                            <Badge variant="secondary" className="shrink-0 text-[9px]">
+                              {t('agents.actionFormTag')}</Badge>
+                          </div>
+                          {m.actionDone ? (
+                            <p className="mt-3 flex items-center gap-1.5 rounded-lg border border-success/30 bg-success/5 px-2.5 py-2 text-[11px] text-success">
+                              <CheckCircle2 className="h-3.5 w-3.5" />{t('agents.actionFormDone')}</p>
+                          ) : (
+                            <>
+                              <div className="mt-3 border-t pt-3">
+                                <SchemaForm fields={m.actionRequest.schema || []}
+                                  value={actionValues[m.actionRequest.id] || {}}
+                                  onChange={(v) => { const id = m.actionRequest!.id; setActionValues((p) => ({ ...p, [id]: v })) }}
+                                  formId={m.actionRequest.form_id}
+                                  errors={actionErrors[m.actionRequest.id]}
+                                  compact columns={2} />
+                              </div>
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <Button size="sm" loading={actionBusy === m.actionRequest.id}
+                                  onClick={() => void submitAction(m, i)}>
+                                  <Send className="h-3 w-3" />{m.actionRequest.submit_label || t('agents.actionFormSubmit')}</Button>
+                                <span className="text-[10px] text-muted-foreground">{t('agents.actionFormHint')}</span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
                       {m.role === 'assistant' && (m.steps?.length || m.sources?.length || m.model) ? (
                         <div className="mt-2 space-y-2 text-left">
                           {!!m.sources?.length && <div className="flex flex-wrap gap-1">

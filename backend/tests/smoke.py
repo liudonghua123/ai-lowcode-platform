@@ -205,7 +205,7 @@ def main() -> int:
         check("REST tool invoke", c.post("/api/v1/mcp/invoke", headers=h,
             json={"tool": "get_stats", "arguments": {}, "target": "server:platform-builtin"}).status_code == 200)
         tool_catalog = c.get("/api/v1/mcp/tools", headers=h).json()
-        check("tool catalog separates builtin/external", tool_catalog["builtin_tools"] == 12
+        check("tool catalog separates builtin/external", tool_catalog["builtin_tools"] == 20
               and "external_tools" in tool_catalog)
         check("MCP status separates servers and skills", c.get(
             "/api/v1/mcp/status", headers=h).json()["servers"]["total"] >= 3)
@@ -527,6 +527,111 @@ def main() -> int:
               json={"principal": "bob", "agent": "carol"}).status_code == 201
               and c.get("/api/v1/workflows/delegations", headers=h).json()["total"] >= 1)
         c.delete(f"/api/v1/forms/{dfid}", headers=h)
+
+        print("\n== Data scopes, portal, agent intents ==")
+        from app.services import data_scope
+        check("admin has all data scope", me.json().get("data_scope") == "all")
+        boot2 = c.get("/api/v1/meta/bootstrap", headers=h).json()
+        check("data:audit permission registered",
+              any(p["code"] == "data:audit" for p in boot2["rbac"]["permissions"]))
+        check("auditor builtin role seeded",
+              any(r["code"] == "auditor" for r in boot2["rbac"]["roles"]))
+        check("20 builtin MCP tool specs",
+              boot2["mcp"].get("builtin_tool_count") == 20,
+              str(boot2["mcp"].get("builtin_tool_count")))
+        hs = c.get("/api/v1/meta/health").json().get("security", {})
+        check("health advertises data scopes",
+              set(hs.get("data_scopes", [])) == {"all", "audit", "self"}
+              and hs.get("auditor_role") is True)
+
+        bob_login = c.post("/api/v1/auth/login",
+                           json={"username": "bob", "password": "demo1234"})
+        check("operator demo login", "access_token" in bob_login.json())
+        bh = {"Authorization": f"Bearer {bob_login.json().get('access_token', '')}"}
+        diana_login = c.post("/api/v1/auth/login",
+                             json={"username": "diana", "password": "demo1234"})
+        check("auditor demo login", "access_token" in diana_login.json())
+        dh = {"Authorization": f"Bearer {diana_login.json().get('access_token', '')}"}
+        bob_me = c.get("/api/v1/auth/me", headers=bh).json()
+        diana_me = c.get("/api/v1/auth/me", headers=dh).json()
+        check("operator is self-scoped",
+              bob_me.get("data_scope") == "self" and not bob_me.get("is_admin"))
+        check("auditor has audit scope",
+              diana_me.get("data_scope") == "audit" and diana_me.get("is_auditor") is True)
+        check("data_scope.read_only(auditor)", data_scope.read_only(diana_me))
+        check("data_scope self for form submissions",
+              data_scope.scope_for(bob_me, "form_submissions") == "self")
+
+        admin_subs = c.get(f"/api/v1/forms/{fid}/submissions", headers=h).json()["total"]
+        bob_subs = c.get(f"/api/v1/forms/{fid}/submissions", headers=bh).json()["total"]
+        diana_subs = c.get(f"/api/v1/forms/{fid}/submissions", headers=dh).json()["total"]
+        check("self scope hides other owners' submissions", bob_subs == 0)
+        check("auditor reads all submissions", diana_subs == admin_subs >= 1)
+        check("auditor is read-only on writes", c.post("/api/v1/workflows", headers=dh,
+              json={"code": f"denied_{suffix}", "name": "denied",
+                    "graph": {"nodes": [], "edges": []}}).status_code == 403)
+        check("self user cannot list all users' tasks", c.get(
+              "/api/v1/workflows/tasks?all_users=true", headers=bh).json().get("assignee") == "bob")
+
+        # --- redesigned workflow portal -------------------------------------
+        cat = c.get("/api/v1/workflows/catalog", headers=h).json()
+        check("portal catalog lists published workflows", cat.get("total", 0) >= 2
+              and any(w["startable"] for w in cat.get("workflows", [])))
+        check("catalog share paths require auth", all(
+              w["requires_auth"] and w["start_path"].startswith("/#/start/")
+              for w in cat.get("workflows", [])))
+        mine = c.get("/api/v1/workflows/mine/instances?status=all", headers=h).json()
+        check("my instances endpoint", "instances" in mine and mine.get("scope") == "all")
+        check("mine instances status filter", all(i["status"] == "approved" for i in c.get(
+              "/api/v1/workflows/mine/instances?status=approved", headers=h).json()["instances"]))
+        bob_mine = c.get("/api/v1/workflows/mine/instances?status=all", headers=bh).json()
+        check("self scope hides other initiators", bob_mine.get("scope") == "self"
+              and all(i.get("started_by") == "bob" for i in bob_mine.get("instances", [])))
+        pstats = c.get("/api/v1/workflows/mine/stats", headers=h).json()
+        check("portal stats", pstats.get("startable_workflows", 0) >= 1
+              and pstats.get("total", 0) >= 1)
+        share = c.get("/api/v1/workflows/share-info/expense_approval")
+        check("public share-info needs no token", share.status_code == 200)
+        sj = share.json() if share.status_code == 200 else {}
+        check("share-info is auth-gated", sj.get("requires_auth") is True
+              and "next=" in sj.get("login_path", "")
+              and sj.get("start_path") == "/#/start/expense_approval")
+        check("share-info exposes workflow_id", isinstance(sj.get("workflow_id"), int))
+        sch = c.get(f"/api/v1/workflows/{ewf['id']}/start-schema", headers=h).json()
+        check("dynamic start schema from bound form", len(sch.get("fields", [])) >= 1
+              and (sch.get("form") or {}).get("code") == "expense_claim")
+        check("start schema is auth-gated", c.get(
+              f"/api/v1/workflows/{ewf['id']}/start-schema").status_code in (401, 403))
+
+        # --- agent self-service intents + schema-driven dynamic form --------
+        rt2 = c.get("/api/v1/agents/meta/runtime", headers=h).json()
+        check("20 tool specs in runtime metadata", len(rt2.get("tools", [])) == 20)
+        who = c.post("/api/v1/agents/1/chat", headers=h,
+                     json={"message": "我是谁，有哪些权限？"})
+        check("identity intent uses scoped tool", who.status_code == 200
+              and who.json().get("provider") == "scoped-tool")
+        appr = c.post("/api/v1/agents/1/chat", headers=h,
+                      json={"message": "查询我的审批及进度"})
+        check("my approvals intent uses scoped tool", appr.status_code == 200
+              and appr.json().get("provider") == "scoped-tool")
+        collect = c.post(f"/api/v1/agents/{aid}/chat", headers=h,
+                         json={"message": "帮我创建一个费用报销流程"})
+        ar = (collect.json().get("action_request") or {}) if collect.status_code == 200 else {}
+        check("collect intent returns action_request", bool(ar))
+        check("action_request carries dynamic schema", ar.get("kind") == "start_workflow"
+              and len(ar.get("schema", [])) >= 1 and "instance_id" not in ar)
+        act = c.post(f"/api/v1/agents/{aid}/actions", headers=h, json={
+            "kind": ar.get("kind", ""), "code": ar.get("code", ""),
+            "data": {"mobile": "13800138000", "claim_type": "差旅", "applicant": "admin",
+                     "department": "IT", "remark": "smoke",
+                     "items": [{"qty": 1, "price": 100}]},
+            "conversation_id": collect.json().get("conversation_id")})
+        check("dynamic form action creates a real instance", act.status_code == 200
+              and act.json().get("ok") is True and act.json().get("instance_id"),
+              act.text[:160])
+        if act.json().get("instance_id"):
+            c.post(f"/api/v1/workflows/instances/{act.json()['instance_id']}/withdraw",
+                   headers=h, json={})
 
         print("\n== Cleanup ==")
         check("delete smoke workflow", c.delete(f"/api/v1/workflows/{wid}", headers=h).status_code == 200)

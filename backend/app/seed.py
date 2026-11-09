@@ -29,8 +29,16 @@ PERMISSIONS = [
     ("rbac:write", "Manage users & roles", "rbac", "write"),
     ("auth:config", "Configure authentication", "auth", "config"),
     ("audit:read", "Read audit logs", "audit", "read"),
+    ("data:audit", "Read all audit-class data (auditor)", "data", "audit"),
     ("settings:read", "Read settings", "settings", "read"),
     ("settings:write", "Manage settings", "settings", "write"),
+]
+
+# Auditor: read-only role that can see every row of the audit-class resources.
+AUDITOR_PERMISSIONS = [
+    "dashboard:view", "form:read", "workflow:read", "knowledge:read",
+    "agent:read", "mcp:read", "rbac:read", "audit:read", "settings:read",
+    "data:audit",
 ]
 
 FORMS = [
@@ -207,6 +215,14 @@ BUILTIN_TOOLS = [
     {"name": "search_knowledge", "description": "Search the knowledge base"},
     {"name": "list_users", "description": "List platform users"},
     {"name": "get_stats", "description": "Platform dashboard statistics"},
+    {"name": "who_am_i", "description": "My identity, roles, permissions and data scope"},
+    {"name": "my_approvals", "description": "My approval tasks and their progress"},
+    {"name": "my_submissions", "description": "Form submissions I created"},
+    {"name": "my_instances", "description": "Approval instances I started"},
+    {"name": "list_startable_workflows", "description": "Published workflows with a start form"},
+    {"name": "get_form_schema", "description": "Rendered schema for a dynamic collection form"},
+    {"name": "start_workflow_instance", "description": "Start an approval instance from form data"},
+    {"name": "submit_form_data", "description": "Submit collected data to a published form"},
 ]
 
 PROVIDERS = [
@@ -222,7 +238,7 @@ PROVIDERS = [
 
 MCP_SERVERS = [
     {"code": "platform-builtin", "name": "Platform Built-in Tools / 平台内置工具",
-     "description": "The platform's own /mcp endpoint and its 12 registered tools.",
+     "description": "The platform's own /mcp endpoint and its 20 registered tools.",
      "transport": "builtin", "endpoint": f"{settings.public_base_url}/mcp", "enabled": 1,
      "health": "healthy", "tools": BUILTIN_TOOLS, "status": "active", "source": "builtin"},
     {"code": "thirdparty-http", "name": "Third-party HTTP MCP / 第三方 HTTP 示例",
@@ -235,6 +251,41 @@ MCP_SERVERS = [
      "command": "npx -y @modelcontextprotocol/server-filesystem ./data",
      "enabled": 0, "health": "manual", "tools": [], "status": "active", "source": "manual"},
 ]
+
+
+def ensure_security_upgrade(now: str | None = None) -> dict:
+    """Idempotently add the data-scope permission, auditor role and demo user.
+
+    Databases created before ADR-0010 are upgraded in place on every boot;
+    existing rows (including user-edited role permissions) are never touched.
+    """
+    now = now or db.now()
+    created = {"permission": 0, "role": 0, "user": 0}
+    if not db.q1("SELECT id FROM permissions WHERE code=?", ("data:audit",)):
+        db.insert("permissions", {"code": "data:audit",
+                                  "name": "Read all audit-class data (auditor)",
+                                  "resource": "data", "action": "audit",
+                                  "description": "data / audit"})
+        created["permission"] += 1
+    if not db.q1("SELECT id FROM roles WHERE code=?", ("auditor",)):
+        perm_map = {p["code"]: p["id"] for p in db.q("SELECT id,code FROM permissions")}
+        db.insert("roles", {"code": "auditor", "name": "Audit Administrator / 审计管理员",
+                            "description": "Read-only visibility of all audit-class data "
+                                           "(submissions, instances, tasks, logs)",
+                            "permission_ids": [perm_map[c] for c in AUDITOR_PERMISSIONS
+                                               if c in perm_map],
+                            "builtin": 1, "mfa_required": 0, "created_at": now})
+        created["role"] += 1
+    role = db.q1("SELECT id FROM roles WHERE code=?", ("auditor",))
+    if role and not db.q1("SELECT id FROM users WHERE username=?", ("diana",)):
+        db.insert("users", {"username": "diana", "email": "diana@platform.local",
+                            "display_name": "Diana Zhao / 赵敏",
+                            "password_hash": security.hash_password("demo1234"),
+                            "status": "active", "dept": "Audit",
+                            "role_ids": [role["id"]], "provider": "local",
+                            "created_at": now, "updated_at": now})
+        created["user"] += 1
+    return created
 
 
 def ensure_registries(now: str | None = None) -> dict:
@@ -252,6 +303,17 @@ def ensure_registries(now: str | None = None) -> dict:
         db.insert("mcp_servers", {**srv, "auth_config": {}, "last_sync_at": now,
                                   "created_by": "admin", "created_at": now, "updated_at": now})
         created["servers"] += 1
+    # Keep the built-in server's declared tool list in sync with the registry
+    # on databases created before the self-service tools were added.
+    builtin = db.q1("SELECT * FROM mcp_servers WHERE code=?", ("platform-builtin",))
+    if builtin:
+        declared = (db.loads(builtin, "tools") or {}).get("tools") or []
+        known = {t.get("name") for t in declared if isinstance(t, dict)}
+        missing = [t for t in BUILTIN_TOOLS if t["name"] not in known]
+        if missing:
+            db.update("mcp_servers", builtin["id"],
+                      {"tools": declared + missing, "updated_at": now})
+            created["tools_added"] = len(missing)
     server_map = {r["code"]: r["id"] for r in db.q("SELECT id,code FROM mcp_servers")}
     for spec in skill_catalog.CATALOG_SPECS:
         if db.q1("SELECT id FROM mcp_skills WHERE code=?", (spec["code"],)):
@@ -282,6 +344,7 @@ def ensure_registries(now: str | None = None) -> dict:
     created["providers"] += boot["created"]
     created["env_refreshed"] = boot["refreshed"]
     created["domestic"] = ensure_domestic_examples(now)
+    created["security"] = ensure_security_upgrade(now)
     return created
 
 
@@ -310,6 +373,9 @@ def seed_if_empty() -> bool:
         ("viewer", "Viewer / 只读用户", "Read-only access to platform assets",
          ids("dashboard:view", "form:read", "workflow:read", "knowledge:read", "agent:read",
              "mcp:read", "rbac:read", "audit:read"), 1, 0),
+        ("auditor", "Audit Administrator / 审计管理员",
+         "Read-only visibility of all audit-class data (submissions, instances, tasks, logs)",
+         ids(*AUDITOR_PERMISSIONS), 1, 0),
     ]
     for code, name, desc, pids, builtin, mfa in roles:
         db.insert("roles", {"code": code, "name": name, "description": desc,
@@ -324,6 +390,7 @@ def seed_if_empty() -> bool:
         ("alice", "alice@platform.local", "Alice Chen / 陈静", demo_pw, [role_map["developer"]], "Engineering"),
         ("bob", "bob@platform.local", "Bob Li / 李博", demo_pw, [role_map["operator"]], "Sales"),
         ("carol", "carol@platform.local", "Carol Wang / 王悦", demo_pw, [role_map["viewer"]], "HR"),
+        ("diana", "diana@platform.local", "Diana Zhao / 赵敏", demo_pw, [role_map["auditor"]], "Audit"),
     ]
     for username, email, display, pwd, rids, dept in users:
         db.insert("users", {"username": username, "email": email, "display_name": display,
@@ -560,4 +627,11 @@ def ensure_domestic_examples(now: str | None = None) -> dict:
                                 "graph": EXPENSE_GRAPH, "version": 1, "created_by": "admin",
                                 "created_at": now, "updated_at": now})
         created["workflows"] += 1
+    # Portal launch needs an explicit form binding on the definition (not only
+    # inside a form node). Backfill demo workflows created before the portal.
+    for wf_code, f_code in (("leave_approval", "leave_request"),
+                            ("purchase_approval", "purchase_request"),
+                            ("expense_approval", "expense_claim")):
+        db.run("UPDATE workflows SET form_code=? WHERE code=? AND "
+               "(form_code IS NULL OR form_code='')", (f_code, wf_code))
     return created

@@ -152,11 +152,28 @@ The router persists the turn to `conversations` and returns `steps` + `sources` 
 
 `_intent_tool_calls()` maps bilingual phrasing to tool calls with a cap of 3 per turn (list-intent regexes are deliberately anchored to avoid multi-intent false positives). `_summarize_tool_result()` renders the last 3 tool messages into a bilingual human-readable summary, with dedicated branches for `forms`, `workflows`, `records`, `hits`, `instance_id`, `submission_id`, `users` and platform stats.
 
+### 5.4 Intent planning and schema-driven collection (`services/agent_intents.py`)
+
+Before the ReAct loop runs, `plan(message, user, context)` classifies the turn:
+**`collect`** ("create an X workflow") returns an `action_request` carrying a
+dynamic `FormField[]` schema derived from the bound form via
+`form_rules.render_schema()` and creates **nothing**; **`tool`** ("who am I",
+"my permissions", "my approvals and progress", "my workflows", "which
+workflows can I start") calls one self-scoped tool and summarizes the result;
+**`chat`** falls back to ReAct / RAG. Query-style wording is intercepted before
+collection so "my workflows" is never read as "create one".
+
+`POST /agents/{id}/chat` returns `action_request`; the UI renders a `SchemaForm`
+card and submits to `POST /agents/{id}/actions`, which executes the action and
+appends the result to the same conversation. This keeps the same "plan → collect
+→ confirm → act" boundary as the auth-gated workflow share page. See
+[WFP-001 §5](workflow-portal-and-data-scopes.md).
+
 ## 6. Unified tool registry (`services/mcp_tools.py`)
 
 ### 6.1 Declaration
 
-Each of the 12 tools is declared once as `{name, description, inputSchema}` where `inputSchema` is a strict JSON Schema object (`additionalProperties: false`, explicit `required`). `PERMISSION_MAP` binds each tool to an RBAC permission; `HANDLERS` binds it to a pure Python function.
+Each of the 20 tools (12 original + 8 self-service/schema tools) is declared once as `{name, description, inputSchema}` where `inputSchema` is a strict JSON Schema object (`additionalProperties: false`, explicit `required`). `PERMISSION_MAP` binds each tool to an RBAC permission; `HANDLERS` binds it to a pure Python function.
 
 | Tool | Required permission | Effect |
 | --- | --- | --- |
@@ -167,6 +184,9 @@ Each of the 12 tools is declared once as `{name, description, inputSchema}` wher
 | `list_collections`, `search_knowledge` | `knowledge:read` | Read collections / BM25 retrieval |
 | `list_users` | `rbac:read` | Read users (password hash always `null`) |
 | `get_stats` | `dashboard:view` | Read platform counters |
+| `who_am_i`, `my_approvals`, `my_submissions`, `my_instances` | self context | Identity / approvals / submissions / instances of the **bound user only** |
+| `list_startable_workflows`, `get_form_schema` | `workflow:read`, `form:read` | Portal catalogue and dynamic `FormField[]` schema |
+| `start_workflow_instance`, `submit_form_data` | `workflow:run`, `form:submit` | **Write** — self-scoped action execution |
 
 ### 6.2 Dispatch and identity isolation
 
@@ -261,7 +281,7 @@ The system prompt is assembled deterministically in `run_agent()`:
 | Method | Result |
 | --- | --- |
 | `initialize` | `protocolVersion` (negotiated), `capabilities{tools,prompts,resources}`, `serverInfo{name,version}`, `instructions` |
-| `tools/list` | 12 tools from `TOOL_SPECS`, plus the `call_remote_tool` bridge |
+| `tools/list` | 20 tools from `TOOL_SPECS`, plus the `call_remote_tool` bridge |
 | `tools/call` | RBAC-checked handler result as MCP content |
 | `resources/list` | `platform://stats`, `platform://forms/{code}`, `platform://workflows/{code}` |
 | `prompts/list` | `analyze_workflow`, `answer_from_kb` |
@@ -335,7 +355,7 @@ The independent Skill registry (`mcp_skills`, served by `/skills`) now carries a
 
 ## 13. Test coverage
 
-`backend/tests/smoke.py` includes dedicated AI assertions: RAG search with mixed zh/en query, document auto-indexing, query agent returning `sources`, act/hybrid agents executing ≥2 real tool calls, tool-result summarization, `tools/list` and `tools/call` over `/mcp`, REST `/mcp/invoke`, third-party skill sync, and RBAC denial for tool calls. Total: **157 passed / 0 failed**. The call journal and skill lifecycle add 63 assertions (recording, statistics, CSV export, clearing, catalog, install, file CRUD, path traversal, enable/disable/uninstall/reinstall).
+`backend/tests/smoke.py` includes dedicated AI assertions: RAG search with mixed zh/en query, document auto-indexing, query agent returning `sources`, act/hybrid agents executing ≥2 real tool calls, tool-result summarization, `tools/list` and `tools/call` over `/mcp`, REST `/mcp/invoke`, third-party skill sync, and RBAC denial for tool calls. Total: **189 passed / 0 failed**. The call journal and skill lifecycle add 63 assertions (recording, statistics, CSV export, clearing, catalog, install, file CRUD, path traversal, enable/disable/uninstall/reinstall).
 
 ## 14. Production upgrade path
 

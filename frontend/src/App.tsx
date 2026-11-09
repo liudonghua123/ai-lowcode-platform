@@ -1,8 +1,9 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useSearchParams } from 'react-router-dom'
 import { AppShell, BrandMark } from '@/components/layout/AppShell'
 import { useApp } from '@/store/AppContext'
 import Login from '@/pages/Login'
 import SsoCallback from '@/pages/SsoCallback'
+import StartWorkflow from '@/pages/StartWorkflow'
 import Dashboard from '@/pages/Dashboard'
 import Forms from '@/pages/Forms'
 import Workflows from '@/pages/Workflows'
@@ -15,6 +16,23 @@ import Rbac from '@/pages/Rbac'
 import AuthSettings from '@/pages/AuthSettings'
 import Audit from '@/pages/Audit'
 import Settings from '@/pages/Settings'
+
+/** Only allow in-app relative redirects (blocks //evil.com open redirects). */
+export function safeNext(raw: string | null): string {
+  return raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : '/'
+}
+
+/**
+ * A share link (/start/{code}) sends anonymous users here with ?next=. Once a
+ * session exists we bounce straight back to that target instead of "/", which
+ * completes the "share URL -> sign in -> return to start form" round trip.
+ */
+function LoginRoute() {
+  const { user } = useApp()
+  const [params] = useSearchParams()
+  if (!user) return <Login />
+  return <Navigate to={safeNext(params.get('next'))} replace />
+}
 
 function Splash() {
   return (
@@ -54,8 +72,10 @@ export default function App() {
   if (loading) return <Splash />
   return (
     <Routes>
-      <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/login" element={<LoginRoute />} />
       <Route path="/sso/callback" element={<SsoCallback />} />
+      {/* Public, auth-gated share landing: renders for anonymous users too. */}
+      <Route path="/start/:code" element={<StartWorkflow />} />
       <Route path="/*" element={user ? <AppShell><AppRoutes /></AppShell> : <Navigate to="/login" replace />} />
     </Routes>
   )

@@ -8,7 +8,7 @@
 | Applies to | `ai-lowcode-platform` v0.1.0 |
 | Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Data Model](data-model.md) · [ADR-0006](adr/0006-rbac-mfa-and-sso.md) |
 
-> 中文摘要：本文档描述平台的身份、认证、授权与审计体系——HS256 JWT（access/mfa/enroll 三类令牌）、PBKDF2-SHA256 180k 轮密码哈希、RFC 6238 TOTP、WebAuthn Passkey、可按全局/角色/用户强制的 MFA 策略、25 项细粒度 RBAC 权限、CAS/OAuth2/OIDC/企业微信/钉钉五种 SSO，以及全量写操作审计。AI 工具调用复用同一套权限校验，详见 [AI 系统设计](ai-design.zh-CN.md)。
+> 中文摘要：本文档描述平台的身份、认证、授权与审计体系——HS256 JWT（access/mfa/enroll 三类令牌）、PBKDF2-SHA256 180k 轮密码哈希、RFC 6238 TOTP、WebAuthn Passkey、可按全局/角色/用户强制的 MFA 策略、26 项细粒度 RBAC 权限、`all`/`audit`/`self` 行级数据范围与只读审计管理员、CAS/OAuth2/OIDC/企业微信/钉钉五种 SSO，以及全量写操作审计。AI 工具调用复用同一套权限校验，详见 [AI 系统设计](ai-design.zh-CN.md)。
 
 ## 1. Identity and tokens
 
@@ -66,7 +66,7 @@ On login, a policy match returns a short-lived `mfa`/`enroll` token instead of a
 
 ### 4.1 Permission model
 
-25 fine-grained permissions:
+26 fine-grained permissions:
 
 ```
 dashboard:view
@@ -77,6 +77,7 @@ agent:read, agent:write, agent:chat
 mcp:read, mcp:write, mcp:invoke
 rbac:read, rbac:write
 auth:config, audit:read
+data:audit
 settings:read, settings:write
 ```
 
@@ -90,8 +91,45 @@ settings:read, settings:write
 | AI tools | `mcp_tools.call_tool()` re-checks `PERMISSION_MAP` with the real user |
 | MCP | `MCPAuthASGIMiddleware` binds the bearer user via `ContextVar`; anonymous read-only is allowed |
 | UI | `AppContext.can(permission)` hides/disables actions; server-side checks remain authoritative |
+| Business data | `data_scope.owner_clause()` / `row_visible()` appended to every query on owned resources |
 
-Built-in roles: `admin` (all), `developer` (build forms/workflows/agents/knowledge), `operator` (submit forms, run workflows, chat), `viewer` (read-only). The smoke test verifies that `bob/operator` receives 403 for form creation and 201 for a permitted form submission.
+Built-in roles: `admin` (all), `developer` (build forms/workflows/agents/knowledge), `operator` (submit forms, run workflows, chat), `viewer` (read-only), `auditor` (read-only, all audit-class data). The smoke test verifies that `bob/operator` receives 403 for form creation and 201 for a permitted form submission.
+
+### 4.3 Data scopes and row-level authorization
+
+RBAC answers *"may this principal call this operation?"*. It does **not** answer
+*"which rows may this principal see?"*. `services/data_scope.py` is the single
+source of truth for the second question and is consulted by REST routers,
+dashboard stats and MCP tools alike.
+
+| Scope | Principal | Business data | Enforcement |
+| --- | --- | --- | --- |
+| `all` | `admin` role or `*` permission | all rows, read + write | empty owner clause |
+| `audit` | `auditor` role / `data:audit` | all rows of audit-class resources, **read-only** | `deps.require()` rejects non-read actions; `mcp_tools.call_tool()` rejects `WRITE_TOOLS` |
+| `self` | everyone else | rows whose owner column equals the current username | `owner = ?` clause |
+| `anonymous` | no session | none | no route access |
+
+`OWNED_RESOURCES` maps each business table to its owner column and audit-class
+membership: `form_submissions.submitted_by`, `workflow_instances.started_by`,
+`flow_tasks.assignee` (also visible to the instance initiator),
+`audit_logs.actor`, `mcp_call_logs.actor`, `conversations.user_id` (not
+audit-class). Definition assets — forms, workflows, agents, knowledge, MCP
+servers/skills, AI providers, users and roles — are **not** owner-scoped; they
+are shared configuration guarded by RBAC, otherwise a user could not see the
+form they are required to fill in.
+
+Single-row reads use `row_visible()` and return **404** (not 403) for an
+invisible row so that existence cannot be enumerated. `GET /auth/me` exposes
+`data_scope`, `data_scopes` and `is_auditor` to the UI. The task center ignores
+`all_users=true` for self-scoped users, and `GET /meta/health` advertises the
+supported scopes.
+
+The `data:audit` permission, the `auditor` builtin role (`AUDITOR_PERMISSIONS`
+contains only read/view/audit codes) and the demo user `diana / demo1234` are
+provisioned by the idempotent `ensure_security_upgrade()`, so databases created
+before this iteration upgrade in place. Totals: **26 permissions / 5 roles /
+6 users**. See [WFP-001 §2](workflow-portal-and-data-scopes.md) and
+[ADR-0010](adr/0010-data-scopes-portal-and-agent-actions.md).
 
 ## 5. SSO
 

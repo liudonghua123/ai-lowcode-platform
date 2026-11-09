@@ -13,7 +13,7 @@ Requirements call for "complete RBAC", CAS/OAuth2/OIDC/WeCom/DingTalk integratio
 
 ## Decision
 
-**RBAC.** 25 fine-grained `resource:action` permissions, stored in `permissions`; roles hold `permission_ids` as JSON. `deps._load_user()` resolves role codes + permissions (`admin` → `["*"]`), and `has_permission()` supports exact codes and `resource:*` wildcards. Every business route declares `Depends(require("resource:action"))`; the same check is reused by the tool registry. Built-in roles: `admin`, `developer`, `operator`, `viewer`.
+**RBAC.** 26 fine-grained `resource:action` permissions (incl. `data:audit`), stored in `permissions`; roles hold `permission_ids` as JSON. `deps._load_user()` resolves role codes + permissions (`admin` → `["*"]`), and `has_permission()` supports exact codes and `resource:*` wildcards. Every business route declares `Depends(require("resource:action"))`; the same check is reused by the tool registry. Built-in roles: `admin`, `developer`, `operator`, `viewer`, `auditor` (see [ADR-0010](0010-data-scopes-portal-and-agent-actions.md) for row-level data scopes).
 
 **Authentication primitives.** PBKDF2-HMAC-SHA256 (180,000 rounds, random salt) for passwords; HS256 JWT with `typ` ∈ `{access, mfa, enroll}`, TTL 7200 s / 300 s; `jwt_decode` validates signature, expiry **and** token type.
 

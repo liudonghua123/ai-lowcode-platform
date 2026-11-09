@@ -151,9 +151,9 @@ erDiagram
 
 ## 6. Seed data (`seed.py`)
 
-`seed_if_empty()` runs once on first boot and creates: 25 permissions, 4 roles, 4 users (`admin`, `alice`, `bob`, `carol`), 5 SSO providers (CAS enabled in demo mode), sample forms and submissions, workflows and instances, knowledge collections/documents, agents, conversations, settings and audit logs. Admin is created with `mfa_required=0` and MFA defaults off, so the demo is immediately usable.
+`seed_if_empty()` runs once on first boot and creates: 26 permissions, 5 roles, 6 users (`admin`, `alice`, `bob`, `carol`, `cas_demo`, `diana`), 5 SSO providers (CAS enabled in demo mode), sample forms and submissions, workflows and instances, knowledge collections/documents, agents, conversations, settings and audit logs. Admin is created with `mfa_required=0` and MFA defaults off, so the demo is immediately usable.
 
-`ensure_registries()` is idempotent and runs on **every** startup (also from `seed_if_empty()`), provisioning three independent registries without touching user data: 3 MCP servers (`platform-builtin`, `thirdparty-http`, `thirdparty-stdio`), 5 catalog Skills (linked to those servers via `server_id`) and 6 default AI model providers (`llm`/`asr`/`tts`/`embedding`/`rerank`/`vision`). `ensure_domestic_examples()` additionally provisions the `expense_claim` form, the `expense_approval` workflow and 6 `org_units` with parent links and leaders. Together these are the in-place upgrade path for databases created before the MCP/Skills split and the domestic form/approval runtime.
+`ensure_security_upgrade()` is likewise idempotent and provisions the `data:audit` permission, the `auditor` role and demo user `diana` on existing databases. `ensure_registries()` is idempotent and runs on **every** startup (also from `seed_if_empty()`), provisioning three independent registries without touching user data: 3 MCP servers (`platform-builtin`, `thirdparty-http`, `thirdparty-stdio`), 5 catalog Skills (linked to those servers via `server_id`) and 6 default AI model providers (`llm`/`asr`/`tts`/`embedding`/`rerank`/`vision`). `ensure_domestic_examples()` additionally provisions the `expense_claim` form, the `expense_approval` workflow and 6 `org_units` with parent links and leaders. Together these are the in-place upgrade path for databases created before the MCP/Skills split and the domestic form/approval runtime.
 
 ## 7. Migration notes
 
@@ -164,3 +164,29 @@ erDiagram
 - `skill_files.bootstrap()` runs at startup to materialize default files for installed skills that have none; `mcp_journal.ensure_demo()` seeds illustrative journal rows when the table is empty.
 - For production, replace SQLite with Postgres and map JSON columns to `JSONB`; the data access helpers are the single integration seam.
 - `backend/data/*.db*` is git-ignored; only `.gitkeep` is committed.
+
+## 8. Data scopes (owner-based row visibility)
+
+No new tables were required for row-level authorization. Instead,
+`services/data_scope.py` declares `OWNED_RESOURCES` — a mapping from each
+business table to its owner column, its alias and its audit-class flag — and all
+queries obtain their filter from `owner_clause(user, resource, alias)` /
+`row_visible(user, resource, row)`.
+
+| Resource | Owner column | Audit-class | Extra visibility |
+| --- | --- | --- | --- |
+| `form_submissions` | `submitted_by` | yes | — |
+| `workflow_instances` | `started_by` | yes | — |
+| `flow_tasks` | `assignee` | yes | also the `workflow_instances.started_by` initiator |
+| `audit_logs` | `actor` | yes | — |
+| `mcp_call_logs` | `actor` | yes | — |
+| `conversations` | `user_id` | no | admin / owner only |
+
+Scopes: `all` (super admin), `audit` (auditor — read-only, all rows of
+audit-class resources), `self` (everyone else), `anonymous` (none). Definition
+assets are deliberately excluded from owner scoping and remain RBAC-governed.
+`deps._load_user()` injects `data_scope` / `data_scopes` / `is_auditor`;
+`ensure_security_upgrade()` seeds the `data:audit` permission, the `auditor`
+role and demo user `diana`. See [WFP-001 §2](workflow-portal-and-data-scopes.md),
+[SEC-001 §4.3](security.md) and
+[ADR-0010](adr/0010-data-scopes-portal-and-agent-actions.md).

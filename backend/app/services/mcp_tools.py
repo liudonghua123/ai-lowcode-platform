@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 from .. import db
 from ..deps import has_permission
-from . import mcp_journal, mcp_servers, rag, workflow_engine
+from . import data_scope, mcp_journal, mcp_servers, rag, workflow_engine
 
 _current_user: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "mcp_current_user", default=None)
@@ -70,7 +70,27 @@ TOOL_SPECS: list[dict] = [
      "inputSchema": _obj({})},
     {"name": "get_stats", "description": "Platform dashboard statistics.",
      "inputSchema": _obj({})},
+    {"name": "who_am_i", "description": "Return my identity, roles, permissions, data scope and personal counters.",
+     "inputSchema": _obj({})},
+    {"name": "my_approvals", "description": "My approval tasks and their workflow progress.",
+     "inputSchema": _obj({"status": {"type": "string", "description": "pending | done | all"},
+                          "limit": {"type": "integer"}})},
+    {"name": "my_submissions", "description": "Form submissions I created.",
+     "inputSchema": _obj({"limit": {"type": "integer"}})},
+    {"name": "my_instances", "description": "Approval workflow instances I started and their progress.",
+     "inputSchema": _obj({"status": {"type": "string"}, "limit": {"type": "integer"}})},
+    {"name": "list_startable_workflows", "description": "Published workflows that can be launched with a form.",
+     "inputSchema": _obj({})},
+    {"name": "get_form_schema", "description": "Rendered field schema used to build a dynamic collection form.",
+     "inputSchema": _obj({"code": {"type": "string", "description": "Form code"}}, ["code"])},
+    {"name": "start_workflow_instance", "description": "Start an approval instance from collected form data.",
+     "inputSchema": _obj({"code": {"type": "string"}, "data": {"type": "object"}}, ["code", "data"])},
+    {"name": "submit_form_data", "description": "Submit collected data to a published form.",
+     "inputSchema": _obj({"code": {"type": "string"}, "data": {"type": "object"}}, ["code", "data"])},
 ]
+
+# Tools that mutate business data — blocked for the read-only auditor role.
+WRITE_TOOLS = {"submit_form", "run_workflow", "start_workflow_instance", "submit_form_data"}
 
 PERMISSION_MAP = {
     "list_forms": "form:read", "get_form": "form:read", "submit_form": "form:submit",
@@ -79,6 +99,8 @@ PERMISSION_MAP = {
     "get_workflow_instance": "workflow:read", "list_collections": "knowledge:read",
     "search_knowledge": "knowledge:read", "list_users": "rbac:read",
     "get_stats": "dashboard:view",
+    "list_startable_workflows": "workflow:read", "get_form_schema": "form:read",
+    "start_workflow_instance": "workflow:run", "submit_form_data": "form:submit",
 }
 
 
@@ -126,15 +148,18 @@ def _submit_form(args: dict) -> dict:
 
 def _query_records(args: dict) -> dict:
     limit = min(int(args.get("limit") or 20), 100)
+    frag, scope_args = data_scope.owner_clause(current_user(), "form_submissions", "s")
+    extra = f" AND {frag}" if frag else ""
     if args.get("form_code"):
         rows = db.q(
             "SELECT s.*,f.code AS form_code,f.name AS form_name FROM form_submissions s "
-            "JOIN forms f ON f.id=s.form_id WHERE f.code=? ORDER BY s.id DESC LIMIT ?",
-            (args["form_code"], limit))
+            "JOIN forms f ON f.id=s.form_id WHERE f.code=?" + extra +
+            " ORDER BY s.id DESC LIMIT ?", (args["form_code"], *scope_args, limit))
     else:
         rows = db.q(
             "SELECT s.*,f.code AS form_code,f.name AS form_name FROM form_submissions s "
-            "JOIN forms f ON f.id=s.form_id ORDER BY s.id DESC LIMIT ?", (limit,))
+            "JOIN forms f ON f.id=s.form_id WHERE 1=1" + extra +
+            " ORDER BY s.id DESC LIMIT ?", (*scope_args, limit))
     return {"records": [db.loads(r, "data") for r in rows], "count": len(rows)}
 
 
@@ -182,8 +207,8 @@ def _run_workflow(args: dict) -> dict:
 
 def _get_workflow_instance(args: dict) -> dict:
     row = db.q1("SELECT * FROM workflow_instances WHERE id=?", (args.get("instance_id"),))
-    if not row:
-        raise ValueError("Instance not found")
+    if not row or not data_scope.row_visible(current_user(), "workflow_instances", row):
+        raise ValueError("Instance not found or not visible")
     return db.loads(row, "context", "logs") or {}
 
 
@@ -212,16 +237,126 @@ def _list_users(_args: dict) -> dict:
 
 
 def _get_stats(_args: dict) -> dict:
-    count = lambda table: int(db.scalar(f"SELECT COUNT(*) FROM {table}") or 0)  # noqa: E731
+    user = current_user()
+    own = data_scope.role(user) == "self"
+    username = (user or {}).get("username") or ""
+
+    def count(table: str, owner: str | None = None) -> int:
+        if own and owner:
+            return int(db.scalar(f"SELECT COUNT(*) FROM {table} WHERE {owner}=?",
+                                 (username,)) or 0)
+        return int(db.scalar(f"SELECT COUNT(*) FROM {table}") or 0)
+
     return {
-        "forms": count("forms"), "form_submissions": count("form_submissions"),
-        "workflows": count("workflows"), "workflow_instances": count("workflow_instances"),
+        "forms": count("forms"), "form_submissions": count("form_submissions", "submitted_by"),
+        "workflows": count("workflows"), "workflow_instances": count("workflow_instances", "started_by"),
         "kb_collections": count("kb_collections"), "kb_documents": count("kb_documents"),
         "agents": count("agents"), "mcp_skills": count("mcp_skills"),
-        "users": count("users"), "roles": count("roles"), "audit_logs": count("audit_logs"),
+        "users": count("users"), "roles": count("roles"),
+        "audit_logs": count("audit_logs", "actor"),
         "published_forms": int(db.scalar("SELECT COUNT(*) FROM forms WHERE status='published'") or 0),
         "published_workflows": int(db.scalar("SELECT COUNT(*) FROM workflows WHERE status='published'") or 0),
     }
+
+
+def _who_am_i(_args: dict) -> dict:
+    from . import agent_intents
+    return agent_intents.identity(current_user())
+
+
+def _my_approvals(args: dict) -> dict:
+    username = (current_user() or {}).get("username") or ""
+    status = args.get("status") or "all"
+    limit = min(int(args.get("limit") or 30), 100)
+    sql = ("SELECT t.*, i.status AS instance_status, i.started_by AS initiator, "
+           "i.form_code, i.started_at, w.code AS workflow_code, w.name AS workflow_name "
+           "FROM flow_tasks t JOIN workflow_instances i ON i.id=t.instance_id "
+           "JOIN workflows w ON w.id=i.workflow_id WHERE t.assignee=?")
+    params: list = [username]
+    if status == "pending":
+        sql += " AND t.status='pending'"
+    elif status == "done":
+        sql += " AND t.status!='pending'"
+    rows = [dict(r) for r in db.q(
+        sql + " ORDER BY CASE WHEN t.status='pending' THEN 0 ELSE 1 END, t.id DESC LIMIT ?",
+        (*params, limit))]
+    return {"approvals": rows, "total": len(rows),
+            "pending": sum(1 for r in rows if r.get("status") == "pending")}
+
+
+def _my_submissions(args: dict) -> dict:
+    username = (current_user() or {}).get("username") or ""
+    limit = min(int(args.get("limit") or 20), 100)
+    rows = db.q("SELECT s.id,s.form_id,s.data,s.status,s.submitted_by,s.serial_no,"
+                "s.created_at,f.code AS form_code,f.name AS form_name "
+                "FROM form_submissions s JOIN forms f ON f.id=s.form_id "
+                "WHERE s.submitted_by=? ORDER BY s.id DESC LIMIT ?", (username, limit))
+    return {"submissions": [db.loads(r, "data") for r in rows], "total": len(rows)}
+
+
+def _my_instances(args: dict) -> dict:
+    username = (current_user() or {}).get("username") or ""
+    status = args.get("status")
+    limit = min(int(args.get("limit") or 20), 100)
+    sql = ("SELECT i.*, w.code AS workflow_code, w.name AS workflow_name "
+           "FROM workflow_instances i JOIN workflows w ON w.id=i.workflow_id "
+           "WHERE i.started_by=?")
+    params: list = [username]
+    if status and status != "all":
+        sql += " AND i.status=?"
+        params.append(status)
+    rows = db.q(sql + " ORDER BY i.id DESC LIMIT ?", (*params, limit))
+    return {"instances": [db.loads(r, "context", "logs", "form_data", "current_nodes")
+                          for r in rows], "total": len(rows)}
+
+
+def _list_startable_workflows(_args: dict) -> dict:
+    rows = db.q("SELECT * FROM workflows WHERE status='published' ORDER BY id")
+    out = []
+    for r in rows:
+        fcode = r.get("form_code")
+        form = db.q1("SELECT name,status,schema FROM forms WHERE code=?", (fcode,)) if fcode else None
+        out.append({"id": r["id"], "code": r["code"], "name": r["name"],
+                    "description": r["description"], "form_code": fcode,
+                    "form_name": form["name"] if form else None,
+                    "field_count": len((db.loads(form, "schema") or {}).get("schema") or [])
+                    if form else 0,
+                    "start_path": f"/#/start/{r['code']}"})
+    return {"workflows": out, "total": len(out)}
+
+
+def _get_form_schema(args: dict) -> dict:
+    from . import form_rules
+    row = db.q1("SELECT * FROM forms WHERE code=?", (args.get("code"),))
+    if not row:
+        raise ValueError(f"Form not found: {args.get('code')}")
+    schema = (db.loads(row, "schema") or {}).get("schema") or []
+    return {"form": {"id": row["id"], "code": row["code"], "name": row["name"],
+                     "version": row["version"], "status": row["status"]},
+            **form_rules.render_schema(schema)}
+
+
+def _start_workflow_instance(args: dict) -> dict:
+    from . import agent_intents
+    user = current_user()
+    if not user:
+        raise PermissionError("Authentication required")
+    result = agent_intents.execute("start_workflow", str(args.get("code") or ""),
+                                   dict(args.get("data") or {}), user)
+    return {"instance_id": result["instance_id"], "workflow": result["code"],
+            "status": result["status"], "pending": len(result["pending"]),
+            "answer": result["answer"]}
+
+
+def _submit_form_data(args: dict) -> dict:
+    from . import agent_intents
+    user = current_user()
+    if not user:
+        raise PermissionError("Authentication required")
+    result = agent_intents.execute("submit_form", str(args.get("code") or ""),
+                                   dict(args.get("data") or {}), user)
+    return {"submission_id": result["submission_id"], "form": result["code"],
+            "status": "submitted", "answer": result["answer"]}
 
 
 HANDLERS: dict[str, Callable[[dict], dict]] = {
@@ -231,6 +366,12 @@ HANDLERS: dict[str, Callable[[dict], dict]] = {
     "get_workflow_instance": _get_workflow_instance, "list_collections": _list_collections,
     "search_knowledge": _search_knowledge, "list_users": _list_users,
     "get_stats": _get_stats,
+    "who_am_i": _who_am_i, "my_approvals": _my_approvals,
+    "my_submissions": _my_submissions, "my_instances": _my_instances,
+    "list_startable_workflows": _list_startable_workflows,
+    "get_form_schema": _get_form_schema,
+    "start_workflow_instance": _start_workflow_instance,
+    "submit_form_data": _submit_form_data,
 }
 
 
@@ -313,6 +454,8 @@ def call_tool(name: str, args: dict | None = None, user: dict | None = None,
             if not external:
                 raise ValueError(f"Unknown tool: {name}")
         if effective_user:
+            if data_scope.read_only(effective_user) and name in WRITE_TOOLS:
+                raise PermissionError("The audit administrator role is read-only")
             needed = PERMISSION_MAP.get(name) or ("mcp:invoke" if external else None)
             if needed and not has_permission(effective_user, needed):
                 raise PermissionError(f"Permission denied for tool {name}: needs {needed}")

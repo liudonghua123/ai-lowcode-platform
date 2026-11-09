@@ -16,8 +16,11 @@ export default function SsoCallback() {
     const params = new URLSearchParams(location.search)
     const token = params.get('token')
     if (!token) { setError('Missing token'); return }
+    // Restore an auth-gated share target saved before the SSO redirect.
+    const stored = sessionStorage.getItem('ailp_next')
+    const target = stored && stored.startsWith('/') && !stored.startsWith('//') ? stored : '/'
     login(token)
-      .then(() => navigate('/', { replace: true }))
+      .then(() => { sessionStorage.removeItem('ailp_next'); navigate(target, { replace: true }) })
       .catch((e) => setError(String(e)))
   }, [location.search, login, navigate])
 

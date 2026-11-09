@@ -9,7 +9,7 @@
 | Machine-readable source | `GET /openapi.json`, interactive UI at `GET /docs` |
 | Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Security Architecture](security.md) · [Data Model](data-model.md) · [Domestic Form & Approval](form-flow-domestic.md) · [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md) |
 
-> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **120 个 OpenAPI 路径 / 157 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 12 个平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank/Vision 六类模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。**国内场景增强**：`/forms` 提供 44 种字段的目录、服务端法定校验、公式求值、版本快照、打印视图与 CSV 导出；`/workflows` 提供 14 种节点、会签/并行/汇聚的人工审批运行时、任务中心、转交/加签/撤回/催办、超时与委托，详见 [国内表单与审批规范](form-flow-domestic.md)。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
+> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **126 个 OpenAPI 路径 / 161 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 20 个平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank/Vision 六类模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。**国内场景增强**：`/forms` 提供 44 种字段的目录、服务端法定校验、公式求值、版本快照、打印视图与 CSV 导出；`/workflows` 提供 14 种节点、会签/并行/汇聚的人工审批运行时、任务中心、转交/加签/撤回/催办、超时与委托，详见 [国内表单与审批规范](form-flow-domestic.md)。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
 
 ## 1. Conventions
 
@@ -42,7 +42,7 @@
 }
 ```
 
-## 2. REST endpoints (120 paths)
+## 2. REST endpoints (126 paths)
 
 ### 2.1 Authentication & MFA — `/auth`
 
@@ -114,8 +114,15 @@ Two runtimes coexist: `services/workflow_engine.py` keeps the original synchrono
 | POST | `/workflows/instances/{instance_id}/urge` | `workflow:run` | Remind all pending assignees |
 | POST | `/workflows/instances/sweep-timeouts` | `workflow:run` | Apply per-node timeout policies to overdue tasks |
 | GET, POST, DELETE | `/workflows/delegations[/{delegation_id}]` | `workflow:read` / `workflow:write` | Approval delegation rules (principal → agent, time window) |
+| GET | `/workflows/catalog` | `workflow:read` | Published workflows + bound form + auth-gated share start path (portal catalogue) |
+| GET | `/workflows/mine/instances` | `workflow:read` | My launched instances; `status` / `q` / `workflow_id` / `date_from` / `date_to` / `limit` filters |
+| GET | `/workflows/mine/stats` | `workflow:read` | Portal counters (startable / total / running / pending approvals) for the caller's scope |
+| GET | `/workflows/share-info/{code}` | **public (no token)** | Non-sensitive share metadata: `workflow_id`, `name`, `form_name`, `requires_auth`, `start_path`, `login_path`, `share_url` |
+| GET | `/workflows/{workflow_id}/start-schema` | `workflow:read` | Dynamic `FormField[]` start schema rendered from the bound form |
 
 Approver rules: `users`, `roles`, `departments`, `initiator`, `initiator_leader`, `leader_chain`, `form_field`, `previous`, `self_select`. Signing modes: `any` (或签), `all` (会签), `ratio`, `sequence` (依次审批). `comment_required` / `signature_required` and node-level `field_permissions` are enforced server-side. See [FFC-001](form-flow-domestic.md) and [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md).
+
+**Workflow portal & auth-gated sharing (v0.1.0+).** The redesigned home page uses `/workflows/catalog` for the startable catalogue, `/workflows/mine/instances` and `/workflows/mine/stats` for "my requests" with filters, and `/workflows/tasks` for approvals. Launching is form-based: `GET /workflows/{id}/start-schema` returns the dynamic `FormField[]` schema (the very same type the form designer emits), and `POST /workflows/{id}/start` accepts `{form_data, create_submission}`. Every startable workflow exposes `GET /workflows/share-info/{code}` — the only public business endpoint, returning metadata plus `start_path` (`/#/start/{code}`) and `login_path` (`/#/login?next=/start/{code}`). Opening the share URL anonymously shows a preview and jumps to sign-in, then returns to the start form; `?data=<base64(json)>` prefills it for host-system integration. All business endpoints apply `data_scope.owner_clause()`: super admin `all`, auditor `audit` (read-only), everyone else `self`. See [WFP-001](workflow-portal-and-data-scopes.md) and [ADR-0010](adr/0010-data-scopes-portal-and-agent-actions.md).
 
 ### 2.4 Knowledge base — `/knowledge`
 
@@ -144,8 +151,11 @@ Approver rules: `users`, `roles`, `departments`, `initiator`, `initiator_leader`
 | GET, DELETE | `/agents/conversations/{conversation_id}` | `agent:read` |
 | GET | `/agents/meta/runtime` | `agent:read` |
 | GET | `/agents/meta/bindings` | `agent:read` (all bindable resources in one call) |
+| POST | `/agents/{agent_id}/actions` | `agent:chat` (execute a schema-driven dynamic-form action) |
 
-`POST /agents` / `PUT /agents/{agent_id}` accept `kb_ids`, `skill_ids`, `server_ids` (MCP servers) and `workflow_ids`; unknown ids are dropped. `GET /agents/meta/bindings` returns the servers, skills, collections, workflows and LLM configurations available to the agent editor. The ReAct tool set is filtered to the tools declared by the bound servers / skills. `POST /agents/{agent_id}/chat` body: `{"message": "...", "conversation_id": 12}` → `{answer, steps, sources, model, provider, tools_available, bound_servers, orchestration}`.
+`POST /agents` / `PUT /agents/{agent_id}` accept `kb_ids`, `skill_ids`, `server_ids` (MCP servers) and `workflow_ids`; unknown ids are dropped. `GET /agents/meta/bindings` returns the servers, skills, collections, workflows and LLM configurations available to the agent editor. The ReAct tool set is filtered to the tools declared by the bound servers / skills. `POST /agents/{agent_id}/chat` body: `{"message": "...", "conversation_id": 12}` → `{answer, steps, sources, model, provider, tools_available, bound_servers, orchestration, action_request?}`.
+
+`chat` now plans the message with `agent_intents.plan()` before any side effect: a **`collect`** intent ("create an X workflow") returns `action_request` with a dynamic `FormField[]` schema and creates nothing; a **`tool`** intent ("who am I", "my approvals and progress", "my workflows", "which workflows can I start") calls one self-scoped tool and summarizes it in natural language; everything else falls back to the ReAct / RAG loop. The chat UI renders `action_request.schema` as a `SchemaForm` card and submits `{kind, code, data, conversation_id}` to `POST /agents/{agent_id}/actions`, which executes the real work (starts an approval instance or submits a form) and appends the result to the same conversation.
 
 ### 2.6 MCP servers — `/mcp/servers`
 
@@ -183,7 +193,7 @@ A Skill has its own lifecycle, manifest and editable files (`SKILL.md`, `manifes
 
 | Methods | Path | Permission |
 | --- | --- | --- |
-| GET | `/mcp/tools` | `mcp:read` (12 platform tools + enabled-server tools) |
+| GET | `/mcp/tools` | `mcp:read` (20 platform tools + enabled-server tools) |
 | GET | `/mcp/status` | `mcp:read` |
 | GET | `/mcp/calls`, `/mcp/calls/stats`, `/mcp/calls/export`, `/mcp/calls/{call_id}` | `mcp:read` |
 | DELETE | `/mcp/calls` | `mcp:write` |
@@ -239,7 +249,7 @@ Streamable HTTP, primary transport `fastmcp` 4.1.6 (`http_app(path="/mcp")`), bu
 | `initialize` | `protocolVersion`, `capabilities`, `clientInfo` | `protocolVersion`, `capabilities{tools,prompts,resources}`, `serverInfo`, `instructions` |
 | `notifications/initialized` | — | `202` |
 | `ping` | — | `{}` |
-| `tools/list` | — | 12 tools with `inputSchema` |
+| `tools/list` | — | 20 tools with `inputSchema` |
 | `tools/call` | `name`, `arguments` | `content`, `structuredContent`, `isError` |
 | `resources/list`, `resources/read`, `resources/templates/list` | `uri` | `platform://stats`, `platform://forms/{code}`, `platform://workflows/{code}` |
 | `prompts/list`, `prompts/get` | `name`, `arguments` | `analyze_workflow`, `answer_from_kb` |
@@ -254,7 +264,7 @@ curl -X POST http://localhost:8000/mcp \
        "params":{"name":"list_forms","arguments":{"status":"published"}}}'
 ```
 
-## 4. Platform tools (12)
+## 4. Platform tools (20)
 
 All input schemas are strict objects (`additionalProperties: false`).
 
@@ -272,8 +282,18 @@ All input schemas are strict objects (`additionalProperties: false`).
 | `search_knowledge` | `query` | `top_k` (≤10) | `knowledge:read` | no |
 | `list_users` | — | — | `rbac:read` | no |
 | `get_stats` | — | — | `dashboard:view` | no |
+| `who_am_i` | — | — | (self context) | no |
+| `my_approvals` | — | `status`, `limit` | (self context) | no |
+| `my_submissions` | — | `form_code`, `limit` | (self context) | no |
+| `my_instances` | — | `status`, `limit` | (self context) | no |
+| `list_startable_workflows` | — | — | `workflow:read` | no |
+| `get_form_schema` | `code` | — | `form:read` | no |
+| `start_workflow_instance` | `code`, `data` | — | `workflow:run` | **yes** |
+| `submit_form_data` | `code`, `data` | — | `form:submit` | **yes** |
 
 `list_tools("openai")` emits the same specs as OpenAI function-calling definitions for the ReAct loop. `mcp_tools.agent_tools(agent)` further filters this catalog to the tools declared by the agent's bound MCP servers (`server_ids`) and skills (`skill_ids`); enabled servers may add remote tool specs resolved through `mcp_servers.external_specs`. The fastmcp bridge tool `call_remote_tool` lets MCP clients reach those remote tools.
+
+The eight self-service tools (13–20) are data-scope aware. The first four resolve the caller from the bound user context and accept **no `username` argument**, so one principal cannot query another's identity, approvals, submissions or instances. `WRITE_TOOLS = {submit_form, run_workflow, start_workflow_instance, submit_form_data}` is rejected for the read-only audit administrator. See [WFP-001 §5](workflow-portal-and-data-scopes.md).
 
 ## 5. Typical sequences
 
@@ -324,4 +344,4 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/workflows/in
 - All business endpoints are versioned under `/api/v1`; breaking changes require a new prefix.
 - MCP protocol version is negotiated during `initialize` (no hard-coded client requirement).
 - `/openapi.json` is the authoritative machine-readable contract; regenerate this table when routers change.
-- `backend/tests/smoke.py` (157 assertions) exercises the critical subset of these endpoints end-to-end, including the full domestic expense approval chain.
+- `backend/tests/smoke.py` (189 assertions) exercises the critical subset of these endpoints end-to-end, including the full domestic expense approval chain.

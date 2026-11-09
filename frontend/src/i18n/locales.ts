@@ -2,6 +2,38 @@ import type { Locale } from '@/types'
 
 export const messages = {
   en: {
+    formFill: {
+      addRow: 'Add row', noFields: 'No fields to fill', auto: 'Auto',
+      upper: 'Amount in words', summary: 'Summary',
+    },
+    portal: {
+      viewPortal: 'Portal', viewDesigner: 'Designer',
+      statsStartable: 'Startable workflows', statsMine: 'My workflows',
+      statsRunning: 'Running', statsPending: 'Pending approvals',
+      tabStart: 'Launch', tabMine: 'My workflows', tabApprovals: 'Approvals',
+      scope: 'Scope', linkCopied: 'Share link copied', formFields: 'Fields',
+      nodes: 'Nodes', authRequired: 'Sign-in required', launch: 'Launch',
+      copyLink: 'Copy link', openDesigner: 'Open designer',
+      noStartable: 'No startable workflows',
+      noStartableHint: 'Publish a workflow with a bound form to make it available here.',
+      filterWorkflow: 'Workflow', dateFrom: 'From', dateTo: 'To',
+      filterKeyword: 'Search by keyword', instanceDetail: 'Instance #{id}',
+    },
+    startPage: {
+      subtitle: 'Workflow launch · shared link',
+      backToPlatform: 'Back to workspace',
+      notFound: 'Workflow not available',
+      notFoundHint: 'The link may be expired or the workflow is not published.',
+      boundForm: 'Linked form', version: 'Version',
+      success: 'Workflow launched',
+      successHint: 'Your approval instance has been created and is now running.',
+      pendingAt: 'Pending approval at',
+      launchAnother: 'Launch another',
+      signInRequired: 'Sign in required to launch this workflow',
+      signInHint: 'This shared link opens an authenticated launch form. Sign in and you will return here automatically, with your data scope applied.',
+      prefilled: 'Fields prefilled from the link parameters',
+      noPermission: 'Your role cannot start workflows. Please contact an administrator.',
+    },
     common: {
       save: 'Save', cancel: 'Cancel', delete: 'Delete', edit: 'Edit', create: 'Create',
       search: 'Search', filter: 'Filter', actions: 'Actions', status: 'Status', name: 'Name',
@@ -48,6 +80,7 @@ export const messages = {
       enrollmentSubtitle: 'Your policy requires a second factor. Enroll OTP to continue.',
       setupOtp: 'Set up OTP', backToLogin: 'Back to sign in',
       mfaFailed: 'Verification failed', secure: 'Secured by JWT · OTP · Passkey',
+      redirectHint: 'You will return to',
     },
     dashboard: {
       title: 'Dashboard', subtitle: 'A live overview of your low-code workspace',
@@ -152,6 +185,7 @@ export const messages = {
         logic: 'Condition logic', conditions: 'Condition group (JSON)',
         join_mode: 'Join mode', delay_hours: 'Delay (hours)',
       },
+      formCodeHint: 'Bind a published form to provide a dynamic start form',
     },
     knowledge: {
       title: 'Knowledge Base', subtitle: 'Ground AI agents in your enterprise documents',
@@ -193,6 +227,9 @@ export const messages = {
       answerBy: 'Answered by {model} · {provider}', history: 'History',
       mcpServers: 'MCP servers', bindingsHint: 'Select the MCP servers, skills, knowledge bases and workflows this agent may use. Changes take effect after saving.',
       selectedCount: '{count} selected', modelDefault: 'Runtime default',
+      actionFormTag: 'Dynamic form', actionFormSubmit: 'Submit & run',
+      actionFormDone: 'Form submitted · action executed',
+      actionFormHint: 'The AI plans first; nothing is created until you submit.',
     },
     mcp: {
       title: 'MCP Skills', subtitle: 'Model Context Protocol tools and third-party skill servers',
@@ -351,6 +388,38 @@ export const messages = {
     },
   },
   zh: {
+    formFill: {
+      addRow: '添加行', noFields: '暂无需要填写的字段', auto: '自动计算',
+      upper: '金额大写', summary: '合计',
+    },
+    portal: {
+      viewPortal: '流程门户', viewDesigner: '流程设计器',
+      statsStartable: '可发起流程', statsMine: '我发起的',
+      statsRunning: '进行中', statsPending: '待我审批',
+      tabStart: '发起流程', tabMine: '我发起的', tabApprovals: '待办审批',
+      scope: '数据范围', linkCopied: '分享链接已复制', formFields: '字段',
+      nodes: '节点', authRequired: '需要登录', launch: '发起',
+      copyLink: '复制链接', openDesigner: '打开设计器',
+      noStartable: '暂无可发起的流程',
+      noStartableHint: '发布一个已绑定表单的流程后，即可在此直接发起。',
+      filterWorkflow: '流程', dateFrom: '开始日期', dateTo: '结束日期',
+      filterKeyword: '按关键词搜索', instanceDetail: '实例 #{id}',
+    },
+    startPage: {
+      subtitle: '流程发起 · 分享链接',
+      backToPlatform: '返回工作台',
+      notFound: '流程不可用',
+      notFoundHint: '链接可能已失效，或该流程尚未发布。',
+      boundForm: '关联表单', version: '版本',
+      success: '流程已发起',
+      successHint: '审批实例已创建并进入流转，可在「我发起的」中查看进度。',
+      pendingAt: '当前待办节点',
+      launchAnother: '再发起一个',
+      signInRequired: '需要登录后才能发起该流程',
+      signInHint: '该分享链接指向需认证的发起页。登录后会自动返回此页，并按你的数据权限加载表单。',
+      prefilled: '已根据链接参数预填字段',
+      noPermission: '当前角色没有发起流程的权限，请联系管理员。',
+    },
     common: {
       save: '保存', cancel: '取消', delete: '删除', edit: '编辑', create: '新建',
       search: '搜索', filter: '筛选', actions: '操作', status: '状态', name: '名称',
@@ -397,6 +466,7 @@ export const messages = {
       enrollmentSubtitle: '当前策略要求二次验证，请先绑定动态口令。',
       setupOtp: '设置动态口令', backToLogin: '返回登录',
       mfaFailed: '验证失败', secure: 'JWT · OTP · Passkey 安全保护',
+      redirectHint: '登录后将返回',
     },
     dashboard: {
       title: '总览', subtitle: '低代码工作区的实时概览',
@@ -501,6 +571,7 @@ export const messages = {
         logic: '条件逻辑', conditions: '条件组（JSON）',
         join_mode: '汇聚方式', delay_hours: '延时（小时）',
       },
+      formCodeHint: '绑定已发布的表单，用于生成动态发起表单',
     },
     knowledge: {
       title: '知识库', subtitle: '用企业文档为 AI 智能体提供事实依据',
@@ -542,6 +613,9 @@ export const messages = {
       answerBy: '由 {model} · {provider} 回答', history: '历史记录',
       mcpServers: 'MCP 服务', bindingsHint: '选择该智能体可使用的 MCP 服务、技能、知识库与流程，保存后生效。',
       selectedCount: '已选 {count} 项', modelDefault: '运行时默认',
+      actionFormTag: '动态表单', actionFormSubmit: '提交并执行',
+      actionFormDone: '表单已提交 · 操作已完成',
+      actionFormHint: 'AI 仅生成收集方案，提交后才会真正创建数据。',
     },
     mcp: {
       title: 'MCP 技能', subtitle: '模型上下文协议工具与第三方技能服务',

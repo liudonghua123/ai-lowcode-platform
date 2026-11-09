@@ -86,7 +86,7 @@ flowchart LR
 | Container | Responsibility | Technology |
 | --- | --- | --- |
 | SPA | All UI, visual designers, i18n, theming | Vite 6, React 18, TypeScript, Tailwind 3, shadcn/ui-style components, lucide-react |
-| REST layer | 120 OpenAPI paths, Pydantic models, error semantics | FastAPI 0.128+, `APIRouter`, `Depends` |
+| REST layer | 126 OpenAPI paths, Pydantic models, error semantics | FastAPI 0.128+, `APIRouter`, `Depends` |
 | MCP server | MCP `initialize` / `tools/list` / `tools/call` / resources / prompts | `fastmcp` 4.1.6 `http_app(path="/mcp")`, builtin JSON-RPC fallback |
 | Service layer | Pure business logic, no HTTP concerns | Python modules in `app/services/` |
 | Security layer | Identity, tokens, password/MFA, permission checks | stdlib `hashlib`/`hmac`, HS256 JWT, `contextvars` |
@@ -107,7 +107,7 @@ app/
 ├── routers/           auth · rbac · forms · workflows · knowledge · agents · mcp
 │                      mcp_servers · skills · ai_providers · audit · meta
 └── services/
-    ├── mcp_tools.py        ★ capability registry (12 tools, schemas, permissions, agent scoping)
+    ├── mcp_tools.py        ★ capability registry (20 tools, schemas, permissions, agent scoping)
     ├── mcp_servers.py      MCP server registry, probe/sync, external tool bridge
     ├── model_providers.py  6 AI categories, key masking, effective_llm()
     ├── documents.py        stdlib-only multi-format parsing (OOXML/PDF/OCR/text)
@@ -117,6 +117,8 @@ app/
     ├── form_rules.py       ★ statutory validation, AST formula sandbox, visibility, permissions
     ├── rag.py              mixed zh/en tokenizer, chunking, BM25, context assembly
     ├── llm.py              3 backends, ReAct orchestration, grounded answers
+    ├── data_scope.py       ★ row-level scopes (all/audit/self), owner clauses, row_visible()
+    ├── agent_intents.py    ★ collect/tool/chat planning, schema-driven action requests
     └── sso.py              5 provider adapters, demo mode, identity provisioning
 ```
 
@@ -138,6 +140,8 @@ main.tsx → HashRouter · ThemeProvider · I18nProvider · ToastProvider · App
 ```
 
 `lib/api.ts` wraps `fetch` with JWT injection, `ApiError`, and a global `401 → logout` event. `AppContext` loads `/auth/me` + `/meta/bootstrap` once after login and exposes `can(permission)`.
+
+The shared `components/SchemaForm.tsx` renders the backend `FormField[]` schema in four places — the designer's start dialog, the portal launch dialog, the public share page and the agent's dynamic collection card — and calls `/forms/{id}/evaluate` for visibility / permissions / computed values. `pages/WorkflowPortal.tsx` is the redesigned workflow home (catalog / my-workflows / approvals); `pages/StartWorkflow.tsx` is the public `/#/start/{code}` landing; `App.tsx` registers it as a public route with a `safeNext()` login round trip, and `Workflows.tsx` toggles Portal / Designer views.
 
 ## 7. Key runtime flows
 
@@ -200,6 +204,22 @@ sequenceDiagram
 
 `POST /workflows/{id}/start` creates an instance that **pins a graph snapshot** plus `workflow_version`, so later definition edits cannot change an in-flight approval. `services/flow_runtime.py` resolves assignees from 9 rules (`users`, `roles`, `departments`, `initiator`, `initiator_leader`, `leader_chain`, `form_field`, `previous`, `self_select`), applies active `flow_delegations`, then creates one `flow_tasks` row per assignee per node activation. Signing modes `any` / `all` / `ratio` / `sequence` decide when a node completes; `parallel` + `join` gate concurrent branches. Each `act` (approve / reject / return / transfer / add-sign) writes an audit log and a timeline entry; `withdraw`, `urge` and `sweep_timeouts()` cover initiator cancellation, reminders and overdue policies. `GET /workflows/instances/{id}/form-schema` merges the bound form schema with the active node's `field_permissions`, and `form_rules.validate_data()` enforces `editable` / `readonly` / `hidden` server-side. See [FFC-001](form-flow-domestic.md).
 
+### 7.5 Auth-gated share link and schema-driven collection
+
+A host system embeds `https://<host>/#/start/{code}`. Phase 1 (anonymous) calls
+the **public** `GET /workflows/share-info/{code}`, shows non-sensitive metadata
+and a sign-in CTA to `/#/login?next=/start/{code}`; `safeNext()` rejects open
+redirects and `sessionStorage` preserves `next` across real SSO reloads. Phase 2
+(authenticated) loads `GET /workflows/{id}/start-schema` → `SchemaForm` →
+`POST /workflows/{id}/start`, with optional `?data=<base64(json)>` prefill. No
+submission or instance data is exposed before authentication.
+
+The agent mirrors this pattern: `agent_intents.plan()` returns a `collect`
+intent with an `action_request` schema and **no side effect**; the chat UI
+renders a `SchemaForm` card and only `POST /agents/{id}/actions` performs the
+work. Every business read in both flows goes through
+`data_scope.owner_clause()`. See [WFP-001](workflow-portal-and-data-scopes.md).
+
 ## 8. Data flow
 
 | Flow | Path | Storage |
@@ -210,7 +230,8 @@ sequenceDiagram
 | Approval instance | `POST /workflows/{id}/start` → `flow_runtime` → `/instances/.../act` | `workflow_versions`, `flow_tasks`, `flow_delegations`, `org_units` |
 | Knowledge (text) | Document create → `rag.index_document()` → JSON `chunks` | `kb_collections`, `kb_documents` |
 | Knowledge (upload) | Multipart → `documents.parse()` → `rag.index_document()` → file metadata + chunks | `kb_documents` |
-| Agent chat | Chat → `run_agent()` (bound tool scope) → conversation turns | `conversations`, `audit_logs` |
+| Agent chat | Chat → `agent_intents.plan()` → `run_agent()` / scoped tool / dynamic form → conversation turns | `conversations`, `audit_logs` |
+| Portal & share | `/workflows/catalog` · `/mine/instances` → `/{id}/start-schema` → `/{id}/start` | `workflow_instances`, `form_submissions`, `flow_tasks` |
 | MCP server registry | Server config → probe/sync → declared tools | `mcp_servers` |
 | Skill registry | Install → lifecycle → editable files → optional `server_id` link | `mcp_skills`, `mcp_skill_files` |
 | AI model providers | `.env` bootstrap → category defaults → `effective_llm()` → runtime override; Settings card + `/models` manager | `ai_providers` |
@@ -232,13 +253,13 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 
 | Concern | Implementation |
 | --- | --- |
-| i18n | 740 leaf keys per locale, default `en`, `localStorage`, `<html lang>` sync, English fallback |
+| i18n | 789 leaf keys per locale, default `en`, `localStorage`, `<html lang>` sync, English fallback |
 | Theme | `system` (default) / `light` / `dark`, `prefers-color-scheme` listener, HSL CSS variables, `meta[theme-color]` |
 | Audit | Every mutation → `audit_logs(actor, action, resource, detail, ip, level, created_at)` |
 | Configuration | `python-dotenv` → frozen `Settings`; `settings` table for runtime overrides |
 | Errors | `HTTPException` with 401 / 403 / 404 / 422; `ApiError` on the client; 401 triggers global logout |
 | Observability | `/api/v1/meta/health`, `/meta/stats`, `/agents/meta/runtime`, `/agents/meta/bindings`, `/mcp/status`, `/mcp/calls/stats`, `/knowledge/stats` |
-| Testing | `backend/tests/smoke.py` — 157 end-to-end assertions; `pnpm typecheck`, `pnpm build`, `pnpm check:i18n`, `ruff check` |
+| Testing | `backend/tests/smoke.py` — 189 end-to-end assertions; `pnpm typecheck`, `pnpm build`, `pnpm check:i18n`, `ruff check` |
 
 ## 11. Technology decisions (summary)
 
@@ -253,6 +274,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | Skill lifecycle, editable files and call journal | Auditable third-party capability management | [0007](adr/0007-mcp-skill-lifecycle-and-journal.md) |
 | Split MCP servers / Skills, AI model providers, knowledge upload, agent bindings | Independent registries and configurable model / knowledge resources | [0008](adr/0008-mcp-skills-split-model-providers-and-knowledge-upload.md) |
 | Domestic form engine + long-running human approval runtime | Cover China enterprise/government form & approval scenarios without a relational per-field schema | [0009](adr/0009-domestic-forms-and-approval-runtime.md) |
+| Centralised data scopes, portal, auth-gated share URL, schema-driven agent actions | One authorization source of truth; schema reuse across four surfaces; no agent side effect before human confirmation | [0010](adr/0010-data-scopes-portal-and-agent-actions.md) |
 
 ## 12. Quality attributes and trade-offs
 
@@ -262,7 +284,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | Security | HS256 JWT, PBKDF2, per-route RBAC, audit | RS256/rotating keys, rate limiting, secret manager |
 | AI accuracy | Deterministic mock + BM25 grounding | Real LLM, vector/embedding store, reranking |
 | Scalability | In-process indexes, synchronous execution | Task queue for workflow runs, external vector DB |
-| Testability | 157 smoke assertions, no network required | Contract tests, load tests, MCP conformance suite |
+| Testability | 189 smoke assertions, no network required | Contract tests, load tests, MCP conformance suite |
 | Operability | Health/stats/runtime endpoints | Structured logging, metrics, tracing |
 
 ## 13. Known limitations
@@ -281,7 +303,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | Domestic forms (FFC-001) | 44-field catalog, statutory validation, AST formulas, versions, print/CSV | `services/form_catalog.py`, `services/form_rules.py`, `routers/forms.py`, `pages/Forms.tsx` |
 | Visual workflow orchestration | DAG validator + engine | `services/workflow_engine.py`, `pages/Workflows.tsx` |
 | Human approval runtime (ADR-0009) | Long-running instances, countersign, parallel/join, task actions, delegation | `services/flow_runtime.py`, `routers/workflows.py`, `pages/Workflows.tsx` |
-| REST API | Versioned routers | `routers/*.py` (157 route decorators → 120 OpenAPI paths) |
+| REST API | Versioned routers | `routers/*.py` (161 route decorators → 126 OpenAPI paths) |
 | MCP transport + tool registry | Dual-transport MCP + single registry | `mcp_server.py`, `routers/mcp.py`, `services/mcp_tools.py` |
 | MCP servers (independent) | CRUD, probe/sync, declared tools, remote invoke | `routers/mcp_servers.py`, `services/mcp_servers.py`, `mcp_servers` |
 | Skills (independent) | Lifecycle, catalog, editable files, `server_id` link | `routers/skills.py`, `services/skill_*.py`, `mcp_skills` |

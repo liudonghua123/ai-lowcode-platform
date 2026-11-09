@@ -7,7 +7,7 @@
 | Status | Current |
 | Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Data Model](data-model.md) · [API & MCP Reference](api-reference.md) · [Knowledge Upload](knowledge-upload.md) · [AI Model Services](ai-models.md) · [ADR-0007](adr/0007-mcp-skill-lifecycle-and-journal.md) · [ADR-0008](adr/0008-mcp-skills-split-model-providers-and-knowledge-upload.md) |
 
-> 中文摘要：MCP 子系统现在由**四层**组成 —— **12 个平台工具**（统一注册表，见 AI-001）、**独立的 MCP 服务注册表**（`mcp_servers` / `/mcp/servers`，负责连接、探测同步与外部工具桥接）、**独立的技能注册表**（`mcp_skills` / `/skills`，负责目录安装、启用/禁用/卸载/重装、可视化管理与可编辑技能文件，并通过可空的 `server_id` 关联服务）、以及**全量调用日记**（`mcp_call_logs`，记录 MCP / REST / Agent / internal 四类来源，含参数、结果预览、耗时、错误与 `target`）。`mcp_tools.agent_tools()` 按智能体绑定收窄工具域。写操作受 `mcp:read` / `mcp:write` / `mcp:invoke` 约束并写入审计日志。删除服务或技能都不会连带删除另一方。
+> 中文摘要：MCP 子系统现在由**四层**组成 —— **20 个平台工具**（统一注册表，见 AI-001）、**独立的 MCP 服务注册表**（`mcp_servers` / `/mcp/servers`，负责连接、探测同步与外部工具桥接）、**独立的技能注册表**（`mcp_skills` / `/skills`，负责目录安装、启用/禁用/卸载/重装、可视化管理与可编辑技能文件，并通过可空的 `server_id` 关联服务）、以及**全量调用日记**（`mcp_call_logs`，记录 MCP / REST / Agent / internal 四类来源，含参数、结果预览、耗时、错误与 `target`）。`mcp_tools.agent_tools()` 按智能体绑定收窄工具域。写操作受 `mcp:read` / `mcp:write` / `mcp:invoke` 约束并写入审计日志。删除服务或技能都不会连带删除另一方。
 
 ## 1. Overview
 
@@ -17,7 +17,7 @@
   AI agent ────────▶ llm.run_agent (ReAct, bound scope)─┤
                                                         ▼
                      services/mcp_tools.py ────────▶ mcp_call_logs
-                     (12 tool specs + external)        (journal, target)
+                     (20 tool specs + external)        (journal, target)
                           │        ▲
                           │        │ declared_tools() / call_remote_tool
                           ▼        │
@@ -27,6 +27,30 @@
 ```
 
 `MCPAuthASGIMiddleware` (pure ASGI) binds an optional bearer token, tags the context with `source` / `actor` / `request_id` / `method`, and buffers the JSON-RPC body once so the method name can be journaled without touching streaming responses.
+
+### 1.1 Built-in tool registry — 20 tools
+
+`mcp_tools.TOOL_SPECS` grew from 12 to 20. The original 12 cover form, workflow,
+knowledge, user and stats operations. The eight additions are self-service and
+schema tools backing the redesigned portal and the agent intent planner:
+
+| Tool | Purpose | Permission | Writes |
+| --- | --- | --- | --- |
+| `who_am_i` | identity, roles, permissions, data scope | self context | no |
+| `my_approvals` | my pending / completed approval tasks | self context | no |
+| `my_submissions` | my form submissions | self context | no |
+| `my_instances` | workflow instances I started | self context | no |
+| `list_startable_workflows` | published workflows I can launch | `workflow:read` | no |
+| `get_form_schema` | dynamic `FormField[]` schema for a form | `form:read` | no |
+| `start_workflow_instance` | start an approval instance | `workflow:run` | **yes** |
+| `submit_form_data` | submit a form | `form:submit` | **yes** |
+
+The first four take **no `username` argument** — the caller comes from the bound
+user context — so one principal cannot query another's data. Business reads are
+additionally filtered by `data_scope.owner_clause()`.
+`WRITE_TOOLS = {submit_form, run_workflow, start_workflow_instance,
+submit_form_data}` is rejected for the read-only audit administrator. See
+[API-001 §4](api-reference.md) and [WFP-001 §5](workflow-portal-and-data-scopes.md).
 
 ## 2. Independent registries (ADR-0008)
 
@@ -171,7 +195,7 @@ Tool-level authorization still uses `PERMISSION_MAP` inside `call_tool` (see ADR
 
 ## 10. Validation
 
-`backend/tests/smoke.py` — **157 assertions**, including journal recording/statistics/export/clear, catalog, install with file creation, file CRUD, path-traversal rejection, enable/disable/uninstall/reinstall and permanent delete; MCP server independent registration, sync, tools, invoke rejection, enable and delete; skill deletion leaving servers intact; agent bindings with stale-id cleanup; AI provider categories/defaults/key masking; multi-format upload and unsupported-format rejection. `POST /mcp` `initialize` / `tools/list` / `tools/call` remain 200 after the ASGI body-buffering change. `pnpm typecheck`, `pnpm build`, `pnpm check:i18n` (740 en/zh keys), `pnpm build` and `ruff check app tests` all pass.
+`backend/tests/smoke.py` — **189 assertions**, including journal recording/statistics/export/clear, catalog, install with file creation, file CRUD, path-traversal rejection, enable/disable/uninstall/reinstall and permanent delete; MCP server independent registration, sync, tools, invoke rejection, enable and delete; skill deletion leaving servers intact; agent bindings with stale-id cleanup; AI provider categories/defaults/key masking; multi-format upload and unsupported-format rejection. `POST /mcp` `initialize` / `tools/list` / `tools/call` remain 200 after the ASGI body-buffering change. `pnpm typecheck`, `pnpm build`, `pnpm check:i18n` (789 en/zh keys), `pnpm build` and `ruff check app tests` all pass.
 
 ## 11. Production considerations
 

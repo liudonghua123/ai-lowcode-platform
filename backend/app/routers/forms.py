@@ -18,7 +18,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .. import db, deps
-from ..services import form_catalog, form_rules
+from ..services import data_scope, form_catalog, form_rules
 
 router = APIRouter(prefix="/forms", tags=["Forms"])
 
@@ -258,11 +258,11 @@ def render(form_id: int, platform: str = Query("desktop", pattern="^(desktop|mob
 
 @router.get("/{form_id}/print/{submission_id}", summary="Structured print view with RMB in words")
 def print_view(form_id: int, submission_id: int,
-               _user: dict = Depends(deps.require("form:read"))):
+               user: dict = Depends(deps.require("form:read"))):
     row = _form_or_404(form_id)
     sub = db.q1("SELECT * FROM form_submissions WHERE id=? AND form_id=?",
                 (submission_id, form_id))
-    if not sub:
+    if not sub or not data_scope.row_visible(user, "form_submissions", sub):
         raise HTTPException(status_code=404, detail="Submission not found")
     sub = db.loads(sub, "data", "computed") or {}
     schema = (db.loads(row, "schema") or {}).get("schema") or []
@@ -340,9 +340,11 @@ def _sub_out(row: dict) -> dict:
 
 @router.get("/{form_id}/submissions", summary="List submissions of a form")
 def submissions(form_id: int, limit: int = 50, status: str | None = None,
-                q: str | None = None, _user: dict = Depends(deps.require("form:read"))):
+                q: str | None = None, user: dict = Depends(deps.require("form:read"))):
     _form_or_404(form_id)
-    sql, args = "SELECT * FROM form_submissions WHERE form_id=?", [form_id]
+    frag, scope_args = data_scope.owner_clause(user, "form_submissions", "s")
+    sql = "SELECT s.* FROM form_submissions s WHERE s.form_id=?" + (f" AND {frag}" if frag else "")
+    args: list = [form_id, *scope_args]
     if status:
         sql += " AND status=?"
         args.append(status)
@@ -354,12 +356,14 @@ def submissions(form_id: int, limit: int = 50, status: str | None = None,
 
 
 @router.get("/{form_id}/submissions/export", summary="Export submissions as CSV")
-def export_submissions(form_id: int, _user: dict = Depends(deps.require("form:read"))):
+def export_submissions(form_id: int, user: dict = Depends(deps.require("form:read"))):
     row = _form_or_404(form_id)
     schema = (db.loads(row, "schema") or {}).get("schema") or []
     keys = [f.get("key") for f in schema
             if f.get("key") and f.get("type") not in form_catalog.LAYOUT_TYPES]
-    rows = db.q("SELECT * FROM form_submissions WHERE form_id=? ORDER BY id", (form_id,))
+    frag, scope_args = data_scope.owner_clause(user, "form_submissions")
+    rows = db.q("SELECT * FROM form_submissions WHERE form_id=?" +
+                (f" AND {frag}" if frag else "") + " ORDER BY id", (form_id, *scope_args))
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["#", "serial_no", "status", "submitted_by", "created_at", *keys])

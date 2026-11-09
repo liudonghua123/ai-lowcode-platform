@@ -106,7 +106,21 @@ def _intent_tool_calls(message: str, user: dict | None) -> list[dict]:
         calls.append({"id": f"call_{len(calls) + 1}_{name}", "type": "function",
                       "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}})
 
-    if re.search(r"(run|start|trigger|执行|运行|启动).*(workflow|流程)|(workflow|流程).*(run|执行|运行)", m):
+    # Self-service queries are answered by scoped tools before generic intents.
+    if re.search(r"(我是谁|我的身份|我的权限|我能做什么|我有哪些权限|who am i|my identity|"
+                 r"my permission|my role|what can i do)", m):
+        add("who_am_i", {})
+    if len(calls) < 3 and re.search(
+            r"(我的审批|审批进度|待办|待我审批|my approval|approval progress|pending task)", m):
+        add("my_approvals", {})
+    if len(calls) < 3 and re.search(r"(我的流程|我发起|我创建|my instance|my workflow|my process)", m):
+        add("my_instances", {})
+    if len(calls) < 3 and re.search(r"(我的数据|我的单据|我的提交|my submission|my record|my data)", m):
+        add("my_submissions", {})
+    if len(calls) < 3 and re.search(
+            r"(可发起|能发起|有哪些流程|可以发起什么|startable|available workflow)", m):
+        add("list_startable_workflows", {})
+    if len(calls) < 3 and re.search(r"(run|start|trigger|执行|运行|启动).*(workflow|流程)|(workflow|流程).*(run|执行|运行)", m):
         code = "purchase_approval" if "purchase" in m or "采购" in message else "leave_approval"
         ctx = {"days": 2, "budget": 5000, "initiator": (user or {}).get("username") or "ai-agent"}
         add("run_workflow", {"code": code, "context": ctx})
@@ -164,6 +178,25 @@ def _summarize_tool_result(messages: list[dict], message: str) -> str:
             payload = {"raw": tm.get("content")}
         if "error" in payload:
             parts.append(f"• {payload['error']}")
+        elif payload.get("answer"):
+            parts.append("• " + str(payload["answer"]))
+        elif "data_scope" in payload:
+            scope = payload["data_scope"] or {}
+            parts.append("• " + (f"身份 {payload.get('username')} · 角色 {', '.join(payload.get('roles') or []) or '—'} · "
+                                 f"数据范围 {scope.get('role')} · 权限 {len(payload.get('permissions') or [])} 项"
+                                 if zh else
+                                 f"Identity {payload.get('username')} · roles {', '.join(payload.get('roles') or []) or '—'} · "
+                                 f"data scope {scope.get('role')} · {len(payload.get('permissions') or [])} permissions"))
+        elif "approvals" in payload:
+            parts.append("• " + (f"我的审批任务 {payload.get('total')} 项，待办 {payload.get('pending')} 项"
+                                 if zh else
+                                 f"{payload.get('total')} approval tasks, {payload.get('pending')} pending"))
+        elif "instances" in payload:
+            parts.append("• " + (f"我发起的流程 {payload.get('total')} 个" if zh else
+                                 f"{payload.get('total')} launched workflows"))
+        elif "submissions" in payload:
+            parts.append("• " + (f"我提交的单据 {payload.get('total')} 条" if zh else
+                                 f"{payload.get('total')} submissions"))
         elif isinstance(payload.get("forms"), list):
             parts.append("• " + (f"共 {payload.get('total')} 个表单：" if zh else f"Found {payload.get('total')} forms: ") +
                          ", ".join(f"{f['code']}({f['status']})" for f in payload["forms"][:6]))
