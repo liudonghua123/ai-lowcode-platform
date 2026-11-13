@@ -55,8 +55,28 @@ class ActionIn(BaseModel):
     conversation_id: int | None = None
 
 
+class ConversationIn(BaseModel):
+    """An empty conversation can be started before the first message is sent."""
+    title: str | None = None
+
+
 def _out(row: dict) -> dict:
     return db.loads(row, "kb_ids", "skill_ids", "server_ids", "workflow_ids") or {}
+
+
+def _conv_out(row: dict | None) -> dict:
+    return db.loads(row, "messages") or {}
+
+
+def _owns_conversation(conv: dict, user: dict) -> bool:
+    return conv.get("user_id") in (user["username"], None) or bool(user.get("is_admin"))
+
+
+def _conv_visible_sql(user: dict) -> tuple[str, tuple]:
+    """Admins see every conversation; other users only their own + shared ones."""
+    if user.get("is_admin"):
+        return "agent_id=?", ()
+    return "agent_id=? AND (user_id=? OR user_id IS NULL)", (user["username"],)
 
 
 @router.get("/meta/runtime", summary="LLM runtime, permission-filtered tools and capability matrix")
@@ -143,21 +163,24 @@ def get_conversation(conversation_id: int, user: dict = Depends(deps.require("ag
     row = db.q1("SELECT * FROM conversations WHERE id=?", (conversation_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    out = db.loads(row, "messages") or {}
-    if out.get("user_id") not in (user["username"], None) and not user["is_admin"]:
+    out = _conv_out(row)
+    if not _owns_conversation(out, user):
         raise HTTPException(status_code=403, detail="Not your conversation")
     return out
 
 
 @router.delete("/conversations/{conversation_id}", summary="Delete a conversation")
-def delete_conversation(conversation_id: int, user: dict = Depends(deps.require("agent:chat"))):
+def delete_conversation(conversation_id: int, user: dict = Depends(deps.require("agent:chat")),
+                        request: Request = None):
     row = db.q1("SELECT user_id FROM conversations WHERE id=?", (conversation_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    if row["user_id"] not in (user["username"], None) and not user["is_admin"]:
+    if not _owns_conversation(row, user):
         raise HTTPException(status_code=403, detail="Not your conversation")
     db.delete("conversations", conversation_id)
-    return {"ok": True}
+    deps.audit(user["username"], "agent.conversation.delete", f"conversation:{conversation_id}",
+               {}, request=request)
+    return {"ok": True, "deleted": 1}
 
 
 @router.get("/{agent_id}", summary="Get an agent")
@@ -197,9 +220,41 @@ def delete_agent(agent_id: int, user: dict = Depends(deps.require("agent:write")
 
 @router.get("/{agent_id}/conversations", summary="List conversations of an agent")
 def list_conversations(agent_id: int, user: dict = Depends(deps.require("agent:chat"))):
-    rows = db.q("SELECT * FROM conversations WHERE agent_id=? AND (user_id=? OR user_id IS NULL) "
-                "ORDER BY id DESC", (agent_id, user["username"]))
-    return {"conversations": [db.loads(r, "messages") for r in rows], "total": len(rows)}
+    where, extra = _conv_visible_sql(user)
+    rows = db.q(f"SELECT * FROM conversations WHERE {where} ORDER BY id DESC",
+                (agent_id,) + extra)
+    return {"conversations": [_conv_out(r) for r in rows], "total": len(rows)}
+
+
+@router.post("/{agent_id}/conversations", status_code=201,
+             summary="Start a new empty conversation for an agent")
+def create_conversation(agent_id: int, body: ConversationIn,
+                        user: dict = Depends(deps.require("agent:chat")),
+                        request: Request = None):
+    """Persist an empty session so it appears in the agent's history group immediately."""
+    row = db.q1("SELECT id FROM agents WHERE id=?", (agent_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    cid = db.insert("conversations", {
+        "agent_id": agent_id, "title": (body.title or "").strip()[:80],
+        "messages": [], "user_id": user["username"], "created_at": db.now()})
+    deps.audit(user["username"], "agent.conversation.create", f"agent:{agent_id}",
+               {"conversation_id": cid}, request=request)
+    return {"conversation": _conv_out(db.q1("SELECT * FROM conversations WHERE id=?", (cid,)))}
+
+
+@router.delete("/{agent_id}/conversations",
+               summary="Delete all conversations belonging to an agent")
+def clear_conversations(agent_id: int, user: dict = Depends(deps.require("agent:chat")),
+                        request: Request = None):
+    """Clear an agent's whole history group without deleting the agent itself."""
+    if not db.q1("SELECT id FROM agents WHERE id=?", (agent_id,)):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    where, extra = _conv_visible_sql(user)
+    cur = db.run(f"DELETE FROM conversations WHERE {where}", (agent_id,) + extra)
+    deps.audit(user["username"], "agent.conversation.clear", f"agent:{agent_id}",
+               {"deleted": cur.rowcount}, request=request)
+    return {"ok": True, "deleted": cur.rowcount}
 
 
 @router.post("/{agent_id}/chat", summary="Chat with a query / act agent (ReAct tool loop)")
@@ -213,10 +268,11 @@ async def chat(agent_id: int, body: ChatIn, user: dict = Depends(deps.require("a
         raise HTTPException(status_code=400, detail="Agent is inactive")
     history: list[dict] = []
     conversation_id = body.conversation_id
-    if conversation_id:
-        conv = db.q1("SELECT * FROM conversations WHERE id=?", (conversation_id,))
-        if conv and (conv.get("user_id") in (user["username"], None) or user["is_admin"]):
-            history = (db.loads(conv, "messages") or {}).get("messages") or []
+    conv = db.q1("SELECT * FROM conversations WHERE id=?", (conversation_id,)) if conversation_id else None
+    if conv and _owns_conversation(conv, user):
+        history = _conv_out(conv).get("messages") or []
+    else:
+        conv = None  # never append to a conversation owned by somebody else
     mcp_tools.bind_user(user)
     mcp_tools.bind_context(source="agent", transport="react", method="agent.tool",
                            actor=user["username"], request_id=db.uid()[:12])
@@ -252,8 +308,12 @@ async def chat(agent_id: int, body: ChatIn, user: dict = Depends(deps.require("a
         {"role": "user", "content": body.message},
         {"role": "assistant", "content": result["answer"]},
     ]
-    if conversation_id and db.q1("SELECT id FROM conversations WHERE id=?", (conversation_id,)):
-        db.update("conversations", conversation_id, {"messages": messages})
+    if conv:
+        # An explicitly created empty session gets its title from the first message.
+        patch = {"messages": messages}
+        if not (conv.get("title") or "").strip():
+            patch["title"] = body.message[:60]
+        db.update("conversations", conversation_id, patch)
     else:
         conversation_id = db.insert("conversations", {
             "agent_id": agent_id, "title": body.message[:60], "messages": messages,

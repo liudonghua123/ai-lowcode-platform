@@ -2,23 +2,24 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Bot, BookOpen, CheckCircle2, ChevronDown, ChevronRight, ClipboardList, Cpu,
-  Database, GitBranch, Lock, Package, MessageSquare, Plus, RefreshCw, Search, Send,
-  Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench,
+  Database, GitBranch, Lock, MessageSquare, Package, Plus, Search, Send,
+  Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench, X,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { PageHeader, SectionTitle } from '@/components/PageHeader'
 import { SchemaForm } from '@/components/SchemaForm'
 import {
   Badge, Button, Card, CardContent, EmptyState, Field, Input, Label, Select,
-  Switch, Textarea,
+  Textarea,
 } from '@/components/ui/basic'
-import { ConfirmDialog, Dialog, Tabs, useToast } from '@/components/ui/overlay'
+import { ConfirmDialog, Dialog, useToast } from '@/components/ui/overlay'
 import { useI18n } from '@/i18n'
 import { useApp } from '@/store/AppContext'
 import { del, get, post, put } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type {
   ActionRequest, AgentActionResult, AgentBindings, AgentDef, BindableItem,
-  CapabilityMatrix, ChatResponse, ChatStep, ToolSpec,
+  CapabilityMatrix, ChatResponse, ChatStep, Conversation, ToolSpec,
 } from '@/types'
 
 interface Message {
@@ -51,19 +52,41 @@ const emptyConfig = (): BindingConfig => ({
   kb_ids: [], skill_ids: [], server_ids: [], workflow_ids: [],
 })
 
+type BindingField = 'server_ids' | 'skill_ids' | 'kb_ids' | 'workflow_ids'
+type PanelKey = BindingField | 'settings' | 'capabilities' | 'tools' | 'runtime'
+type ConfirmState =
+  | { kind: 'deleteSession'; id: number; agentId: number }
+  | { kind: 'clearSessions'; agentId: number; agentName: string }
+  | { kind: 'deleteAgent' }
+
+const toggleId = (list: number[], id: number) =>
+  list.includes(id) ? list.filter((x) => x !== id) : [...list, id]
+
+const fmtTime = (s?: string) => (s || '').replace('T', ' ').slice(5, 16)
+
+const configOf = (a: AgentDef): BindingConfig => ({
+  name: a.name, description: a.description || '', mode: a.mode,
+  model: a.model || '', system_prompt: a.system_prompt || '', temperature: a.temperature,
+  kb_ids: [...(a.kb_ids || [])], skill_ids: [...(a.skill_ids || [])],
+  server_ids: [...(a.server_ids || [])], workflow_ids: [...(a.workflow_ids || [])],
+})
+
 export default function Agents() {
   const { t } = useI18n()
   const { can } = useApp()
   const { toast } = useToast()
   const scrollRef = useRef<HTMLDivElement>(null)
   const [searchParams] = useSearchParams()
+
   const [agents, setAgents] = useState<AgentDef[]>([])
   const [selected, setSelected] = useState<AgentDef | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [conversationId, setConversationId] = useState<number | null>(null)
+  const [sessions, setSessions] = useState<Record<number, Conversation[]>>({})
+  const [groupsOpen, setGroupsOpen] = useState<Record<number, boolean>>({})
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
-  const [rightTab, setRightTab] = useState('config')
+  const [panel, setPanel] = useState<PanelKey | null>(null)
   const [runtime, setRuntime] = useState<any>(null)
   const [tools, setTools] = useState<ToolSpec[]>([])
   const [capabilities, setCapabilities] = useState<CapabilityMatrix | null>(null)
@@ -72,13 +95,51 @@ export default function Agents() {
   const [config, setConfig] = useState<BindingConfig | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [createForm, setCreateForm] = useState<any>({})
-  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null)
   const [expanded, setExpanded] = useState<Record<number, boolean>>({})
   const [actionValues, setActionValues] = useState<Record<string, Record<string, unknown>>>({})
   const [actionErrors, setActionErrors] = useState<Record<string, Record<string, string>>>({})
   const [actionBusy, setActionBusy] = useState<string | null>(null)
+
   const capPct = Math.round(((capabilities?.available_tools ?? 0)
     / Math.max(1, capabilities?.total_tools ?? 1)) * 100)
+
+  const bindingPanels: {
+    key: BindingField; field: BindingField; label: string; icon: LucideIcon
+    items: BindableItem[]
+  }[] = [
+    { key: 'server_ids', field: 'server_ids', label: t('agents.mcpServers'), icon: Server,
+      items: bindings?.servers || [] },
+    { key: 'skill_ids', field: 'skill_ids', label: t('agents.skills'), icon: Package,
+      items: bindings?.skills || [] },
+    { key: 'kb_ids', field: 'kb_ids', label: t('agents.knowledge'), icon: Database,
+      items: bindings?.collections || [] },
+    { key: 'workflow_ids', field: 'workflow_ids', label: t('agents.workflows'), icon: GitBranch,
+      items: bindings?.workflows || [] },
+  ]
+  const infoPanels: { key: PanelKey; label: string; icon: LucideIcon }[] = [
+    { key: 'settings', label: t('agents.agentSettings'), icon: Settings2 },
+    { key: 'capabilities', label: t('agents.capabilities'), icon: ShieldCheck },
+    { key: 'tools', label: t('agents.toolCatalog'), icon: Wrench },
+    { key: 'runtime', label: t('agents.runtimeInfo'), icon: Cpu },
+  ]
+  const activeBinding = bindingPanels.find((p) => p.key === panel)
+  const ActiveIcon = activeBinding?.icon
+  const selectedCount = config
+    ? (config.server_ids.length + config.skill_ids.length + config.kb_ids.length + config.workflow_ids.length)
+    : 0
+  const currentSession = selected && conversationId
+    ? (sessions[selected.id] || []).find((c) => c.id === conversationId) || null
+    : null
+
+  /* ---------------------------------------------------------------- data --- */
+
+  const refreshSessions = async (agentId: number) => {
+    try {
+      const d = await get<{ conversations: Conversation[] }>(`/agents/${agentId}/conversations`)
+      setSessions((p) => ({ ...p, [agentId]: d.conversations || [] }))
+    } catch { /* keep the last known list */ }
+  }
 
   const load = async () => {
     try {
@@ -87,23 +148,35 @@ export default function Agents() {
         get<{ runtime: any; tools: ToolSpec[]; capabilities: CapabilityMatrix }>('/agents/meta/runtime'),
         get<AgentBindings>('/agents/meta/bindings'),
       ])
-      setAgents(a.agents || []); setRuntime(rt.runtime); setTools(rt.tools || [])
-      setCapabilities(rt.capabilities || null)
-      setBindings(b)
-      return a.agents || []
+      const list = a.agents || []
+      setAgents(list); setRuntime(rt.runtime); setTools(rt.tools || [])
+      setCapabilities(rt.capabilities || null); setBindings(b)
+      const pairs = await Promise.all(list.map(async (x): Promise<[number, Conversation[]]> => {
+        try {
+          const d = await get<{ conversations: Conversation[] }>(`/agents/${x.id}/conversations`)
+          return [x.id, d.conversations || []]
+        } catch { return [x.id, []] }
+      }))
+      const map: Record<number, Conversation[]> = {}
+      for (const [id, rows] of pairs) map[id] = rows
+      setSessions(map)
+      return list
     } catch { return [] }
   }
   useEffect(() => { void load() }, [])
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }) }, [messages, sending])
 
-  const select = (a: AgentDef) => {
-    setSelected(a)
-    setConfig({ name: a.name, description: a.description || '', mode: a.mode,
-      model: a.model || '', system_prompt: a.system_prompt || '', temperature: a.temperature,
-      kb_ids: [...(a.kb_ids || [])], skill_ids: [...(a.skill_ids || [])],
-      server_ids: [...(a.server_ids || [])], workflow_ids: [...(a.workflow_ids || [])] })
-    setMessages([]); setConversationId(null)
+  /* ------------------------------------------------------------- sessions --- */
+
+  const applyAgent = (a: AgentDef) => {
+    setSelected(a); setConfig(configOf(a))
     setActionValues({}); setActionErrors({})
+  }
+
+  const select = (a: AgentDef) => {
+    applyAgent(a); setMessages([]); setConversationId(null)
+    setGroupsOpen((p) => ({ ...p, [a.id]: true }))
+    setPanel(null)
   }
 
   // Deep link: /#/agents?agent=general_copilot opens a specific agent.
@@ -113,6 +186,63 @@ export default function Agents() {
     const target = agents.find((a) => a.code === code)
     if (target && selected?.id !== target.id) select(target)
   }, [agents, searchParams, selected?.id])
+
+  const openSession = async (a: AgentDef, c: Conversation) => {
+    applyAgent(a)
+    setGroupsOpen((p) => ({ ...p, [a.id]: true }))
+    setPanel(null)
+    try {
+      const d = await get<Conversation>(`/agents/conversations/${c.id}`)
+      setMessages((d.messages || []).map((m) => ({ role: m.role, content: m.content })))
+      setConversationId(c.id)
+    } catch (e: any) { toast(e.message, 'error') }
+  }
+
+  const newSession = async (agentId?: number) => {
+    const id = agentId ?? selected?.id
+    if (!id) return
+    const a = agents.find((x) => x.id === id)
+    if (!a) return
+    // Reuse an existing empty session instead of piling up blank records.
+    const existing = (sessions[id] || []).find((c) => !(c.messages || []).length && !(c.title || '').trim())
+    applyAgent(a); setGroupsOpen((p) => ({ ...p, [id]: true }))
+    setPanel(null); setMessages([])
+    if (existing) { setConversationId(existing.id); return }
+    try {
+      const d = await post<{ conversation: Conversation }>(`/agents/${id}/conversations`, { title: '' })
+      await refreshSessions(id)
+      setConversationId(d.conversation.id)
+    } catch (e: any) { toast(e.message, 'error'); setConversationId(null) }
+  }
+
+  const deleteSession = async (id: number, agentId: number) => {
+    try {
+      await del(`/agents/conversations/${id}`)
+      await refreshSessions(agentId)
+      if (conversationId === id) { setMessages([]); setConversationId(null) }
+      toast(t('common.deleted'), 'success')
+    } catch (e: any) { toast(e.message, 'error') }
+  }
+
+  const clearSessions = async (agentId: number) => {
+    try {
+      await del(`/agents/${agentId}/conversations`)
+      setSessions((p) => ({ ...p, [agentId]: [] }))
+      if (selected?.id === agentId) { setMessages([]); setConversationId(null) }
+      toast(t('common.deleted'), 'success')
+    } catch (e: any) { toast(e.message, 'error') }
+  }
+
+  const runConfirm = () => {
+    if (!confirm) return
+    const c = confirm
+    setConfirm(null)
+    if (c.kind === 'deleteSession') void deleteSession(c.id, c.agentId)
+    else if (c.kind === 'clearSessions') void clearSessions(c.agentId)
+    else void remove()
+  }
+
+  /* ------------------------------------------------------------------ chat --- */
 
   const send = async (text?: string) => {
     const content = (text ?? input).trim()
@@ -124,6 +254,7 @@ export default function Agents() {
       setMessages((p) => [...p, { role: 'assistant', content: r.answer, steps: r.steps,
         sources: r.sources, model: r.model, provider: r.provider,
         actionRequest: r.action_request || null }])
+      await refreshSessions(selected.id)
     } catch (e: any) { toast(e.message, 'error'); setMessages((p) => [...p, { role: 'assistant', content: `Error: ${e.message}` }]) }
     finally { setSending(false) }
   }
@@ -143,6 +274,7 @@ export default function Agents() {
       if (r.conversation_id) setConversationId(r.conversation_id)
       setMessages((p) => p.map((x, i) => i === index ? { ...x, actionDone: true } : x)
         .concat({ role: 'assistant', content: r.answer, provider: 'action' }))
+      await refreshSessions(selected.id)
       toast(t('agents.actionFormDone'), 'success')
     } catch (e: any) {
       const msg = String(e?.message || '')
@@ -155,6 +287,8 @@ export default function Agents() {
       toast(msg, 'error')
     } finally { setActionBusy(null) }
   }
+
+  /* --------------------------------------------------------------- agents --- */
 
   const openCreate = () => {
     setCreateForm({ code: '', ...emptyConfig(), model: runtime?.model || '', status: 'active' })
@@ -170,37 +304,32 @@ export default function Agents() {
     if (!selected || !config) return
     try {
       const a = await put<AgentDef>(`/agents/${selected.id}`, config)
-      setSelected(a); setAgents((p) => p.map((x) => x.id === a.id ? a : x)); toast(t('common.saved'), 'success')
-      await load()
+      setSelected(a); setAgents((p) => p.map((x) => x.id === a.id ? a : x))
+      toast(t('common.saved'), 'success'); setPanel(null)
     } catch (e: any) { toast(e.message, 'error') }
   }
   const remove = async () => {
     if (!selected) return
-    try { await del(`/agents/${selected.id}`); setSelected(null); setMessages([]); await load(); toast(t('common.deleted'), 'success') }
-    catch (e: any) { toast(e.message, 'error') }
-    finally { setConfirmDelete(false) }
-  }
-  const toggleBinding = (setter: (fn: (c: any) => any) => void, field: keyof BindingConfig, id: number) => {
-    setter((c: any) => ({ ...c, [field]: (c[field] || []).includes(id)
-      ? c[field].filter((x: number) => x !== id) : [...(c[field] || []), id] }))
+    const id = selected.id
+    try {
+      await del(`/agents/${id}`)
+      setSelected(null); setMessages([]); setConversationId(null); setPanel(null)
+      setSessions((p) => { const n = { ...p }; delete n[id]; return n })
+      await load(); toast(t('common.deleted'), 'success')
+    } catch (e: any) { toast(e.message, 'error') }
   }
 
-  const bindingGroups = (cfg: BindingConfig, setter: (fn: (c: any) => any) => void) => [
-    { field: 'server_ids' as const, title: t('agents.mcpServers'), icon: <Server className="h-3 w-3" />,
-      items: bindings?.servers || [] },
-    { field: 'skill_ids' as const, title: t('agents.skills'), icon: <Package className="h-3 w-3" />,
-      items: bindings?.skills || [] },
-    { field: 'kb_ids' as const, title: t('agents.knowledge'), icon: <Database className="h-3 w-3" />,
-      items: bindings?.collections || [] },
-    { field: 'workflow_ids' as const, title: t('agents.workflows'), icon: <GitBranch className="h-3 w-3" />,
-      items: bindings?.workflows || [] },
-  ].map((g) => <BindingGroup key={g.field} title={g.title} icon={g.icon} items={g.items}
-    selected={(cfg[g.field] as number[]) || []}
-    onToggle={(id) => toggleBinding(setter, g.field, id)} />)
+  const bindingGroups = (cfg: BindingConfig, setter: (fn: (c: any) => any) => void) =>
+    bindingPanels.map((g) => <BindingGroup key={g.field} title={g.label} icon={<g.icon className="h-3 w-3" />}
+      items={g.items} selected={(cfg[g.field] as number[]) || []}
+      onToggle={(id) => setter((c: any) => ({ ...c, [g.field]: toggleId(c[g.field] || [], id) }))} />)
 
-  const selectedCount = config
-    ? (config.server_ids.length + config.skill_ids.length + config.kb_ids.length + config.workflow_ids.length)
-    : 0
+  const panelTitle = activeBinding
+    ? `${t('agents.configure')} · ${activeBinding.label}`
+    : panel === 'settings' ? t('agents.agentSettings')
+      : panel === 'capabilities' ? t('agents.capabilities')
+        : panel === 'tools' ? t('agents.toolCatalog')
+          : panel === 'runtime' ? t('agents.runtimeInfo') : ''
 
   return (
     <div className="mx-auto max-w-[1600px]">
@@ -210,42 +339,96 @@ export default function Agents() {
           {can('agent:write') && <Button size="sm" onClick={openCreate}><Plus className="h-4 w-4" />{t('agents.newAgent')}</Button>}
         </>} />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[14rem_minmax(0,1fr)_22rem]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[17rem_minmax(0,1fr)]">
+        {/* ---------------------------------------------- agents + sessions --- */}
         <Card><CardContent className="p-3">
-          <SectionTitle>{t('agents.agentList')}</SectionTitle>
-          <div className="space-y-1">
-            {agents.map((a) => (
-              <button key={a.id} onClick={() => select(a)}
-                className={cn('flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-all',
-                  selected?.id === a.id ? 'bg-primary/10 text-primary' : 'hover:bg-muted')}>
-                <Bot className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{a.name}</span>
-                  <span className="block truncate text-[10px] text-muted-foreground">{a.mode} · {a.model}</span></span>
-                <Badge variant="outline" className="shrink-0 text-[8px]">{(a.server_ids || []).length}</Badge>
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-2">
+            <SectionTitle>{t('agents.agentList')}</SectionTitle>
+            {can('agent:write') && <Button variant="ghost" size="icon-sm" title={t('agents.newAgent')} onClick={openCreate}>
+              <Plus className="h-3.5 w-3.5" /></Button>}
+          </div>
+          <div className="scroll-thin max-h-[20rem] space-y-1.5 overflow-y-auto lg:max-h-[42rem]">
+            {agents.map((a) => {
+              const rows = sessions[a.id] || []
+              const open = !!groupsOpen[a.id]
+              return (
+                <div key={a.id} className={cn('rounded-lg border transition-colors',
+                  selected?.id === a.id ? 'border-primary/40 bg-primary/[0.04]' : 'border-border')}>
+                  <div className="flex items-center gap-0.5 px-1 py-1">
+                    <button type="button" onClick={() => setGroupsOpen((p) => ({ ...p, [a.id]: !p[a.id] }))}
+                      title={open ? t('agents.collapse') : t('agents.expand')}
+                      className="flex h-7 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground">
+                      {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                    </button>
+                    <button type="button" onClick={() => select(a)}
+                      className={cn('flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-1 text-left',
+                        selected?.id === a.id ? 'text-primary' : 'hover:bg-muted')}>
+                      <Bot className="h-3.5 w-3.5 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium">{a.name}</span>
+                      <Badge variant="outline" className="shrink-0 text-[8px]">{rows.length}</Badge>
+                    </button>
+                    <button type="button" title={t('agents.newSession')} onClick={() => void newSession(a.id)}
+                      className="flex h-7 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-primary">
+                      <Plus className="h-3 w-3" /></button>
+                    <button type="button" title={t('agents.clearSessions')} disabled={!rows.length}
+                      onClick={() => setConfirm({ kind: 'clearSessions', agentId: a.id, agentName: a.name })}
+                      className="flex h-7 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-30">
+                      <Trash2 className="h-3 w-3" /></button>
+                  </div>
+                  {open && <div className="space-y-0.5 border-t px-1.5 pb-1.5 pt-1">
+                    {rows.map((c) => (
+                      <div key={c.id} className={cn('group flex items-center gap-1 rounded-md px-1.5 py-1',
+                        conversationId === c.id && selected?.id === a.id ? 'bg-primary/10 text-primary' : 'hover:bg-muted')}>
+                        <MessageSquare className="h-3 w-3 shrink-0 opacity-60" />
+                        <button type="button" onClick={() => void openSession(a, c)} className="min-w-0 flex-1 text-left">
+                          <span className="block truncate text-[11px] font-medium">{c.title || t('agents.untitledSession')}</span>
+                          <span className="block truncate text-[9px] text-muted-foreground">
+                            {(c.messages || []).length} {t('agents.messagesUnit')} · {fmtTime(c.created_at)}</span>
+                        </button>
+                        <button type="button" title={t('agents.deleteSession')}
+                          onClick={() => setConfirm({ kind: 'deleteSession', id: c.id, agentId: a.id })}
+                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100">
+                          <X className="h-3 w-3" /></button>
+                      </div>
+                    ))}
+                    {!rows.length && <p className="px-1.5 py-2 text-[10px] text-muted-foreground">{t('agents.noSessions')}</p>}
+                    <button type="button" onClick={() => void newSession(a.id)}
+                      className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-muted hover:text-primary">
+                      <Plus className="h-3 w-3" />{t('agents.newSession')}</button>
+                  </div>}
+                </div>
+              )
+            })}
+            {!agents.length && <p className="py-6 text-center text-xs text-muted-foreground">{t('common.noData')}</p>}
           </div>
           <div className="mt-3 border-t pt-3">
-            <Button variant="outline" size="sm" className="w-full" onClick={() => { setMessages([]); setConversationId(null); setInput('') }}>
-              <Plus className="h-3.5 w-3.5" />{t('agents.newChat')}
-            </Button>
+            <Button variant="outline" size="sm" className="w-full" disabled={!selected} onClick={() => void newSession()}>
+              <Plus className="h-3.5 w-3.5" />{t('agents.newSession')}</Button>
           </div>
         </CardContent></Card>
 
+        {/* ------------------------------------------------------------ chat --- */}
         <Card className="flex min-h-[34rem] flex-col">
           {!selected ? (
             <EmptyState icon={<Bot className="h-5 w-5" />} title={t('agents.emptyTitle')} description={t('agents.emptyText')} />
           ) : (
             <>
               <div className="flex items-center gap-2 border-b px-4 py-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><Bot className="h-4 w-4" /></span>
-                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{selected.name}</p>
-                  <p className="truncate text-[11px] text-muted-foreground">{selected.description}</p></div>
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Bot className="h-4 w-4" /></span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">{selected.name}</p>
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    {currentSession ? `${currentSession.title || t('agents.untitledSession')} · ` : ''}{selected.description}</p>
+                </div>
                 <Badge variant="secondary">{selected.mode}</Badge>
-                <Button variant="ghost" size="icon-sm" title={t('agents.newChat')} onClick={() => { setMessages([]); setConversationId(null) }}><RefreshCw className="h-3.5 w-3.5" /></Button>
+                <Button variant="ghost" size="icon-sm" title={t('agents.newSession')} onClick={() => void newSession()}>
+                  <Plus className="h-3.5 w-3.5" /></Button>
+                {conversationId && <Button variant="ghost" size="icon-sm" title={t('agents.deleteSession')}
+                  onClick={() => setConfirm({ kind: 'deleteSession', id: conversationId, agentId: selected.id })}>
+                  <Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>}
               </div>
 
-              <div ref={scrollRef} className="scroll-thin flex-1 space-y-4 overflow-y-auto p-4" style={{ maxHeight: '32rem' }}>
+              <div ref={scrollRef} className="scroll-thin flex-1 space-y-4 overflow-y-auto p-4" style={{ maxHeight: '34rem' }}>
                 {!messages.length && (
                   <div className="flex h-full flex-col items-center justify-center gap-3 py-10 text-center">
                     <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Sparkles className="h-6 w-6" /></span>
@@ -333,7 +516,33 @@ export default function Agents() {
                   <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />{t('agents.thinking')}</div>}
               </div>
 
+              {/* Icon toolbar: all agent configuration lives above the composer. */}
               <div className="border-t p-3">
+                <div className="mb-2 flex flex-wrap items-center gap-1">
+                  {bindingPanels.map((p) => {
+                    const n = config ? (config[p.field] || []).length : 0
+                    return (
+                      <button key={p.key} type="button" title={`${t('agents.configure')} · ${p.label}`}
+                        onClick={() => setPanel(p.key)}
+                        className={cn('relative inline-flex h-8 items-center gap-1.5 rounded-lg border px-2 text-[11px] font-medium transition-all',
+                          panel === p.key ? 'border-primary/50 bg-primary/10 text-primary' : 'text-muted-foreground hover:border-primary/40 hover:text-foreground')}>
+                        <p.icon className="h-3.5 w-3.5 shrink-0" />
+                        <span className="hidden xl:inline">{p.label}</span>
+                        {n > 0 && <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/15 px-1 font-mono text-[9px] text-primary">{n}</span>}
+                      </button>
+                    )
+                  })}
+                  <span className="mx-1 hidden h-5 w-px bg-border sm:block" />
+                  {infoPanels.map((p) => (
+                    <button key={p.key} type="button" title={p.label} onClick={() => setPanel(p.key)}
+                      className={cn('inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-all',
+                        panel === p.key ? 'border-primary/50 bg-primary/10 text-primary' : 'text-muted-foreground hover:border-primary/40 hover:text-foreground')}>
+                      <p.icon className="h-3.5 w-3.5" /></button>
+                  ))}
+                  <span className="ml-auto hidden text-[10px] text-muted-foreground md:inline">
+                    {t('agents.boundResources', { count: selectedCount })} · {t('agents.attachHint')}
+                  </span>
+                </div>
                 <div className="flex items-end gap-2">
                   <Textarea rows={2} className="min-h-[68px] resize-none text-xs" value={input}
                     placeholder={t('agents.placeholder')} onChange={(e) => setInput(e.target.value)}
@@ -345,57 +554,49 @@ export default function Agents() {
             </>
           )}
         </Card>
+      </div>
 
-        <Card className="h-fit"><CardContent className="p-3">
-          <Tabs value={rightTab} onValueChange={setRightTab} className="mb-3 w-full" items={[
-            { value: 'config', label: t('agents.config'), icon: <Settings2 className="h-3 w-3" /> },
-            { value: 'bindings', label: t('agents.bindings'), icon: <Server className="h-3 w-3" />, count: selectedCount },
-            { value: 'runtime', label: t('agents.runtime'), icon: <Cpu className="h-3 w-3" /> },
-            { value: 'capabilities', label: t('agents.capabilities'), icon: <ShieldCheck className="h-3 w-3" />, count: capabilities?.available_tools ?? 0 },
-            { value: 'tools', label: t('agents.tools'), count: tools.length },
-          ]} />
-          {rightTab === 'config' && (config && selected ? <div className="space-y-3">
-            <Field label={t('agents.agentName')}><Input value={config.name || ''} onChange={(e) => setConfig({ ...config, name: e.target.value })} /></Field>
-            <Field label={t('agents.mode')}><Select value={config.mode} onValueChange={(v) => setConfig({ ...config, mode: v })}
-              options={['query', 'act', 'hybrid'].map((m) => ({ value: m, label: t(`agents.mode${m.charAt(0).toUpperCase() + m.slice(1)}`) }))} /></Field>
-            <Field label={t('agents.model')}><Select value={config.model || ''} onValueChange={(v) => setConfig({ ...config, model: v })}
-              options={[{ value: '', label: t('agents.modelDefault') },
-                ...(bindings?.models || []).map((m) => ({ value: m.model || '', label: `${m.name} · ${m.model || 'env'}` }))]} /></Field>
-            <Field label={t('agents.systemPrompt')}><Textarea rows={3} value={config.system_prompt || ''} onChange={(e) => setConfig({ ...config, system_prompt: e.target.value })} /></Field>
-            <Field label={`${t('agents.temperature')}: ${config.temperature}`}>
-              <input type="range" min="0" max="1" step="0.1" className="w-full accent-[hsl(var(--primary))]"
-                value={config.temperature} onChange={(e) => setConfig({ ...config, temperature: Number(e.target.value) })} />
-            </Field>
-            <div className="flex gap-2">
-              <Button size="sm" className="flex-1" onClick={saveConfig} disabled={!can('agent:write')}>{t('common.save')}</Button>
-              <Button variant="outline" size="icon" onClick={() => setConfirmDelete(true)} disabled={!can('agent:write')}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
+      {/* -------------------------------------------------- configuration dialogs --- */}
+      <Dialog open={panel !== null && !!selected} onOpenChange={(v) => { if (!v) setPanel(null) }}
+        title={panelTitle} size={panel === 'capabilities' || panel === 'settings' ? 'lg' : 'md'}
+        footer={(activeBinding || panel === 'settings') ? <>
+          <Button variant="outline" onClick={() => setPanel(null)}>{t('common.cancel')}</Button>
+          <Button onClick={() => void saveConfig()} disabled={!can('agent:write')}>{t('common.save')}</Button>
+        </> : <Button variant="outline" onClick={() => setPanel(null)}>{t('common.close')}</Button>}>
+        {!selected ? <p className="py-8 text-center text-xs text-muted-foreground">{t('agents.emptyTitle')}</p> : <>
+          {activeBinding && ActiveIcon && config && <div className="space-y-3">
+            <p className="text-xs leading-relaxed text-muted-foreground">{t('agents.bindingsHint')}</p>
+            <BindingGroup large title={activeBinding.label} icon={<ActiveIcon className="h-3 w-3" />}
+              items={activeBinding.items} selected={config[activeBinding.field] || []}
+              onToggle={(id) => setConfig((c) => c ? { ...c, [activeBinding.field]: toggleId(c[activeBinding.field] || [], id) } : c)} />
+            <div className="flex flex-wrap gap-1">
+              {bindingPanels.map((p) => <Badge key={p.key} variant="secondary">
+                {p.label}: {(config[p.field] || []).length}</Badge>)}
             </div>
-          </div> : <p className="py-8 text-center text-xs text-muted-foreground">{t('agents.emptyTitle')}</p>)}
-
-          {rightTab === 'bindings' && (config && selected ? <div className="space-y-2">
-            <p className="text-[10px] text-muted-foreground">{t('agents.bindingsHint')}</p>
-            {bindingGroups(config, setConfig)}
-            <div className="flex flex-wrap gap-1 pt-1">
-              <Badge variant="secondary">{t('agents.mcpServers')}: {config.server_ids.length}</Badge>
-              <Badge variant="secondary">{t('agents.skills')}: {config.skill_ids.length}</Badge>
-              <Badge variant="secondary">{t('agents.knowledge')}: {config.kb_ids.length}</Badge>
-              <Badge variant="secondary">{t('agents.workflows')}: {config.workflow_ids.length}</Badge>
-            </div>
-            <Button size="sm" className="w-full" onClick={saveConfig} disabled={!can('agent:write')}>{t('common.save')}</Button>
-          </div> : <p className="py-8 text-center text-xs text-muted-foreground">{t('agents.emptyTitle')}</p>)}
-
-          {rightTab === 'runtime' && <div className="space-y-2 text-xs">
-            {[
-              ['provider', runtime?.provider], ['model', runtime?.model], ['temperature', runtime?.temperature],
-              ['config_source', runtime?.config_source], ['orchestration', runtime?.orchestration], ['tools', runtime?.tools],
-              ['AgentScope', runtime?.agentscope?.available ? `v${runtime.agentscope.version}` : 'unavailable'],
-              ['modules', runtime?.agentscope?.modules?.length ?? 0], ['has_api_key', String(runtime?.has_api_key ?? false)],
-            ].map(([k, v]) => <div key={String(k)} className="flex items-start justify-between gap-2 rounded-md border px-2.5 py-2">
-              <span className="text-muted-foreground">{k}</span><span className="max-w-[60%] break-words text-right font-mono text-[10px]">{String(v ?? '—')}</span></div>)}
-            <p className="pt-1 text-[10px] leading-relaxed text-muted-foreground">{t('agents.welcomeHint')}</p>
           </div>}
 
-          {rightTab === 'capabilities' && <div className="scroll-thin max-h-[30rem] space-y-2 overflow-y-auto pr-0.5">
+          {panel === 'settings' && config && <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="space-y-3">
+              <Field label={t('agents.agentName')}><Input value={config.name || ''} onChange={(e) => setConfig({ ...config, name: e.target.value })} /></Field>
+              <Field label={t('agents.mode')}><Select value={config.mode} onValueChange={(v) => setConfig({ ...config, mode: v })}
+                options={['query', 'act', 'hybrid'].map((m) => ({ value: m, label: t(`agents.mode${m.charAt(0).toUpperCase() + m.slice(1)}`) }))} /></Field>
+              <Field label={t('agents.model')}><Select value={config.model || ''} onValueChange={(v) => setConfig({ ...config, model: v })}
+                options={[{ value: '', label: t('agents.modelDefault') },
+                  ...(bindings?.models || []).map((m) => ({ value: m.model || '', label: `${m.name} · ${m.model || 'env'}` }))]} /></Field>
+            </div>
+            <div className="space-y-3">
+              <Field label={t('agents.systemPrompt')}><Textarea rows={5} value={config.system_prompt || ''} onChange={(e) => setConfig({ ...config, system_prompt: e.target.value })} /></Field>
+              <Field label={`${t('agents.temperature')}: ${config.temperature}`}>
+                <input type="range" min="0" max="1" step="0.1" className="w-full accent-[hsl(var(--primary))]"
+                  value={config.temperature} onChange={(e) => setConfig({ ...config, temperature: Number(e.target.value) })} />
+              </Field>
+              {can('agent:write') && <Button variant="outline" className="w-full text-destructive"
+                onClick={() => setConfirm({ kind: 'deleteAgent' })}>
+                <Trash2 className="h-3.5 w-3.5" />{t('agents.deleteAgent')}</Button>}
+            </div>
+          </div>}
+
+          {panel === 'capabilities' && <div className="scroll-thin max-h-[60vh] space-y-2 overflow-y-auto pr-0.5">
             <div className="rounded-lg border bg-muted/40 p-2.5">
               <p className="flex items-center gap-1.5 text-[11px] font-medium">
                 <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
@@ -403,32 +604,26 @@ export default function Agents() {
               </p>
               <div className="mt-1.5 flex items-end justify-between gap-2">
                 <span className="text-[10px] text-muted-foreground">
-                  {capabilities?.available_tools ?? 0} / {capabilities?.total_tools ?? 0} {t('capabilities.tools')}
-                </span>
+                  {capabilities?.available_tools ?? 0} / {capabilities?.total_tools ?? 0} {t('capabilities.tools')}</span>
                 <span className="font-mono text-[10px] text-primary">{capPct}%</span>
               </div>
               <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted">
                 <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${capPct}%` }} />
               </div>
-              <p className="mt-1.5 break-words text-[10px] leading-relaxed text-muted-foreground">
-                {t('capabilities.legend')}
-              </p>
+              <p className="mt-1.5 break-words text-[10px] leading-relaxed text-muted-foreground">{t('capabilities.legend')}</p>
             </div>
             {Object.entries(capabilities?.domains || {}).map(([domain, d]) => (
               <div key={domain} className="rounded-lg border p-2">
-                <button type="button"
-                  onClick={() => setCapOpen({ ...capOpen, [domain]: !capOpen[domain] })}
+                <button type="button" onClick={() => setCapOpen({ ...capOpen, [domain]: !capOpen[domain] })}
                   className="flex w-full items-center justify-between gap-2 text-left">
                   <span className="flex min-w-0 items-center gap-1.5">
-                    {capOpen[domain]
-                      ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    {capOpen[domain] ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
                       : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />}
                     <span className="truncate text-[11px] font-medium capitalize">{domain}</span>
                   </span>
                   <span className={cn('shrink-0 font-mono text-[10px]',
                     d.available === d.total ? 'text-emerald-600 dark:text-emerald-400' : 'text-primary')}>
-                    {d.available}/{d.total}
-                  </span>
+                    {d.available}/{d.total}</span>
                 </button>
                 <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted">
                   <div className="h-full rounded-full bg-primary/70"
@@ -440,8 +635,7 @@ export default function Agents() {
                 {capOpen[domain] && <div className="mt-1.5 space-y-1">
                   {d.tools.map((tool) => (
                     <div key={tool.name} className="flex items-start gap-1.5 rounded border px-1.5 py-1">
-                      {tool.available
-                        ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" />
+                      {tool.available ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" />
                         : <Lock className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />}
                       <div className="min-w-0 flex-1">
                         <p className={cn('break-words font-mono text-[10px]',
@@ -458,15 +652,28 @@ export default function Agents() {
             {!capabilities && <p className="py-6 text-center text-xs text-muted-foreground">—</p>}
           </div>}
 
-          {rightTab === 'tools' && <div className="scroll-thin max-h-[30rem] space-y-1.5 overflow-y-auto">
+          {panel === 'tools' && <div className="scroll-thin max-h-[60vh] space-y-1.5 overflow-y-auto">
             {tools.map((tool) => <div key={tool.name} className="rounded-lg border p-2">
               <p className="font-mono text-[11px] font-medium text-primary">{tool.name}</p>
               <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">{tool.description}</p>
-              <p className="mt-1 font-mono text-[9px] text-muted-foreground">{Object.keys(tool.inputSchema?.properties || {}).join(', ') || '—'}</p>
+              <p className="mt-1 break-words font-mono text-[9px] text-muted-foreground">
+                {Object.keys(tool.inputSchema?.properties || {}).join(', ') || '—'}</p>
             </div>)}
           </div>}
-        </CardContent></Card>
-      </div>
+
+          {panel === 'runtime' && <div className="space-y-2 text-xs">
+            {[
+              ['provider', runtime?.provider], ['model', runtime?.model], ['temperature', runtime?.temperature],
+              ['config_source', runtime?.config_source], ['orchestration', runtime?.orchestration], ['tools', runtime?.tools],
+              ['AgentScope', runtime?.agentscope?.available ? `v${runtime.agentscope.version}` : 'unavailable'],
+              ['modules', runtime?.agentscope?.modules?.length ?? 0], ['has_api_key', String(runtime?.has_api_key ?? false)],
+            ].map(([k, v]) => <div key={String(k)} className="flex items-start justify-between gap-2 rounded-md border px-2.5 py-2">
+              <span className="text-muted-foreground">{k}</span>
+              <span className="max-w-[60%] break-words text-right font-mono text-[10px]">{String(v ?? '—')}</span></div>)}
+            <p className="pt-1 text-[10px] leading-relaxed text-muted-foreground">{t('agents.welcomeHint')}</p>
+          </div>}
+        </>}
+      </Dialog>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen} title={t('agents.createTitle')} size="lg"
         footer={<><Button variant="outline" onClick={() => setCreateOpen(false)}>{t('common.cancel')}</Button><Button onClick={create}>{t('common.create')}</Button></>}>
@@ -496,14 +703,20 @@ export default function Agents() {
           </div>
         </div>
       </Dialog>
-      <ConfirmDialog open={confirmDelete} onOpenChange={setConfirmDelete} title={t('common.confirmDelete')} onConfirm={remove} />
+
+      <ConfirmDialog open={!!confirm} onOpenChange={(v) => { if (!v) setConfirm(null) }}
+        title={confirm?.kind === 'deleteSession' ? t('agents.deleteSession')
+          : confirm?.kind === 'clearSessions' ? t('agents.clearSessions') : t('agents.deleteAgent')}
+        description={confirm?.kind === 'deleteSession' ? t('agents.confirmDeleteSession')
+          : confirm?.kind === 'clearSessions' ? t('agents.confirmClearSessions') : t('agents.confirmDeleteAgent')}
+        onConfirm={runConfirm} />
     </div>
   )
 }
 
-function BindingGroup({ title, icon, items, selected, onToggle }: {
+function BindingGroup({ title, icon, items, selected, onToggle, large = false }: {
   title: string; icon: React.ReactNode; items: BindableItem[]
-  selected: number[]; onToggle: (id: number) => void
+  selected: number[]; onToggle: (id: number) => void; large?: boolean
 }) {
   const [query, setQuery] = useState('')
   const filtered = items.filter((x) => `${x.name} ${x.code}`.toLowerCase().includes(query.toLowerCase()))
@@ -517,7 +730,7 @@ function BindingGroup({ title, icon, items, selected, onToggle }: {
         <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
         <Input className="h-7 pl-7 text-[11px]" placeholder="…" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
-      <div className="scroll-thin max-h-28 space-y-1 overflow-y-auto">
+      <div className={cn('scroll-thin space-y-1 overflow-y-auto', large ? 'max-h-72' : 'max-h-28')}>
         {filtered.map((x) => (
           <label key={x.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/60">
             <input type="checkbox" className="h-3 w-3 accent-[hsl(var(--primary))]" checked={selected.includes(x.id)} onChange={() => onToggle(x.id)} />

@@ -443,6 +443,7 @@ CREATE INDEX IF NOT EXISTS idx_user_groups_code ON user_groups(code);
 CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient, read_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_skill_hubs_enabled ON skill_hubs(enabled, kind);
+CREATE INDEX IF NOT EXISTS idx_conversations_agent_user ON conversations(agent_id, user_id);
 """
 
 # Columns added after the first release. SQLite cannot add them through

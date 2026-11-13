@@ -193,6 +193,50 @@ def main() -> int:
         check("bound agent chat", bound_chat.status_code == 200
               and bound_chat.json()["tools_available"] >= 1)
 
+        # v6 — conversations are grouped under their agent and fully manageable.
+        empty = c.post(f"/api/v1/agents/{aid}/conversations", headers=h, json={"title": ""})
+        check("create empty conversation", empty.status_code == 201
+              and empty.json()["conversation"]["messages"] == []
+              and empty.json()["conversation"]["agent_id"] == aid,
+              str(empty.json())[:200])
+        ecid = empty.json().get("conversation", {}).get("id", 0)
+        grouped = c.get(f"/api/v1/agents/{aid}/conversations", headers=h)
+        check("conversations grouped by agent", grouped.status_code == 200
+              and all(x["agent_id"] == aid for x in grouped.json()["conversations"])
+              and any(x["id"] == ecid for x in grouped.json()["conversations"]))
+        first = c.post(f"/api/v1/agents/{aid}/chat", headers=h,
+                       json={"message": "Show platform statistics", "conversation_id": ecid})
+        check("chat reuses the explicit conversation", first.status_code == 200
+              and first.json()["conversation_id"] == ecid)
+        titled = c.get(f"/api/v1/agents/conversations/{ecid}", headers=h)
+        check("first message titles an empty conversation", titled.status_code == 200
+              and titled.json()["title"] == "Show platform statistics"
+              and len(titled.json()["messages"]) == 2)
+        second = c.post(f"/api/v1/agents/{aid}/conversations", headers=h,
+                        json={"title": "Second session"})
+        scid = second.json()["conversation"]["id"]
+        check("create a second conversation", second.status_code == 201 and scid != ecid)
+        check("delete a single conversation", c.delete(
+            f"/api/v1/agents/conversations/{scid}", headers=h).json().get("deleted") == 1)
+        check("deleted conversation is gone", c.get(
+            f"/api/v1/agents/conversations/{scid}", headers=h).status_code == 404)
+        cleared = c.delete(f"/api/v1/agents/{aid}/conversations", headers=h)
+        check("clear all conversations of an agent", cleared.status_code == 200
+              and cleared.json()["deleted"] >= 2, str(cleared.json())[:120])
+        check("agent survives a conversation clear", c.get(
+            f"/api/v1/agents/{aid}", headers=h).status_code == 200)
+        check("conversation group is empty after clear", c.get(
+            f"/api/v1/agents/{aid}/conversations", headers=h).json()["total"] == 0)
+        owned = c.post(f"/api/v1/agents/{aid}/conversations", headers=h,
+                       json={"title": "admin only"}).json()["conversation"]["id"]
+        bob_tok = c.post("/api/v1/auth/login", json={
+            "username": "bob", "password": "demo1234"}).json()["access_token"]
+        bh2 = {"Authorization": f"Bearer {bob_tok}"}
+        check("non-owner cannot delete a conversation", c.delete(
+            f"/api/v1/agents/conversations/{owned}", headers=bh2).status_code == 403)
+        check("non-owner cannot clear an agent's conversations", c.delete(
+            f"/api/v1/agents/{aid}/conversations", headers=bh2).json().get("deleted") == 0)
+
         print("\n== MCP transport ==")
         check("MCP initialize", c.post("/mcp", headers=mh, json={"jsonrpc": "2.0", "id": 1,
             "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {},

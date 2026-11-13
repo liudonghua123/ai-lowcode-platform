@@ -9,7 +9,7 @@
 | Machine-readable source | `GET /openapi.json`, interactive UI at `GET /docs` |
 | Related | [System Architecture](architecture.md) · [AI System Design](ai-design.md) · [Security Architecture](security.md) · [Data Model](data-model.md) · [Domestic Form & Approval](form-flow-domestic.md) · [ADR-0009](adr/0009-domestic-forms-and-approval-runtime.md) |
 
-> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **149 个 OpenAPI 路径 / 192 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 24 个平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank/Vision 六类模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。**国内场景增强**：`/forms` 提供 44 种字段的目录、服务端法定校验、公式求值、版本快照、打印视图与 CSV 导出；`/workflows` 提供 14 种节点、会签/并行/汇聚的人工审批运行时、任务中心、转交/加签/撤回/催办、超时与委托，详见 [国内表单与审批规范](form-flow-domestic.md)。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
+> 中文摘要：REST API 统一挂在 `/api/v1` 下，共 **149 个 OpenAPI 路径 / 194 个路由装饰器**，除登录与 SSO 外均需 `Authorization: Bearer`；MCP 通过 `/mcp` 提供 streamable HTTP，注册 55 个按权限过滤的平台工具（+1 远程工具桥接）。MCP 服务（`/mcp/servers`）与技能（`/skills`）各自独立管理；`/ai/providers` 提供 LLM/ASR/TTS/Embedding/Rerank/Vision 六类模型配置；`/knowledge/upload` 支持 Office/PDF/Markdown 等多格式文档上传；`/agents/meta/bindings` 让创建智能体时可一键绑定 MCP 服务、技能与知识库。**国内场景增强**：`/forms` 提供 66 种组件的目录、服务端法定校验、公式求值、版本快照、打印视图与 CSV 导出；`/workflows` 提供 24 种节点、会签/并行/汇聚的人工审批运行时、任务中心、转交/加签/撤回/催办、超时与委托，详见 [国内表单与审批规范](form-flow-domestic.md)。本文档列出完整端点、MCP 方法、工具 Schema 与调用示例。详见 [系统架构设计](architecture.zh-CN.md) 与 [MCP 服务、技能与调用日记](mcp-skills.md)。
 
 ## 1. Conventions
 
@@ -269,6 +269,18 @@ See [MCP Servers, Skills & Call Journal](mcp-skills.md) for the two registries, 
 
 Three hubs are seeded (2 offline builtin + 1 remote), exposing 13 searchable skills in 6 categories. `search` merges enabled hubs and returns `errors` for failed ones so an unreachable remote hub degrades to the builtin index.
 
+### 2.14 Agent conversation groups — `/agents/{agent_id}/conversations`
+
+| Methods | Path | Permission | Notes |
+| --- | --- | --- | --- |
+| GET | `/agents/{agent_id}/conversations` | `agent:chat` | Sessions of one agent, newest first; admins see all, others only their own + shared (`user_id IS NULL`) |
+| POST | `/agents/{agent_id}/conversations` | `agent:chat` | `{"title": ""}` starts an **empty** session immediately; returns `{"conversation": {...}}` |
+| DELETE | `/agents/{agent_id}/conversations` | `agent:chat` | Clear the whole group without deleting the agent; returns `{"ok": true, "deleted": n}` |
+| GET | `/agents/conversations/{id}` | `agent:chat` | Full message history for resuming a session |
+| DELETE | `/agents/conversations/{id}` | `agent:chat` | Delete one session; 403 for a non-owner |
+
+`POST /agents/{agent_id}/chat` with `conversation_id` appends to that session. If its `title` is still empty it is set from the first user message (max 60 chars). The frontend studio reuses an existing empty session instead of piling up blank rows, and refreshes the group after every chat / dynamic-form action. See [AGS-001](agent-studio-and-conversations.md).
+
 ## 3. MCP endpoint `/mcp`
 
 Streamable HTTP, primary transport `fastmcp` 4.1.6 (`http_app(path="/mcp")`), built-in JSON-RPC fallback when the SDK is unavailable. Optional `Authorization: Bearer <token>` for RBAC-checked tool calls.
@@ -408,4 +420,4 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/workflows/in
 - All business endpoints are versioned under `/api/v1`; breaking changes require a new prefix.
 - MCP protocol version is negotiated during `initialize` (no hard-coded client requirement).
 - `/openapi.json` is the authoritative machine-readable contract; regenerate this table when routers change.
-- `backend/tests/smoke.py` (272 assertions) exercises the critical subset of these endpoints end-to-end, including the full domestic expense approval chain.
+- `backend/tests/smoke.py` (284 assertions) exercises the critical subset of these endpoints end-to-end, including the full domestic expense approval chain.

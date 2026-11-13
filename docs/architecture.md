@@ -255,13 +255,13 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 
 | Concern | Implementation |
 | --- | --- |
-| i18n | 929 leaf keys per locale, default `en`, `localStorage`, `<html lang>` sync, English fallback |
+| i18n | 950 leaf keys per locale, default `en`, `localStorage`, `<html lang>` sync, English fallback |
 | Theme | `system` (default) / `light` / `dark`, `prefers-color-scheme` listener, HSL CSS variables, `meta[theme-color]` |
 | Audit | Every mutation → `audit_logs(actor, action, resource, detail, ip, level, created_at)` |
 | Configuration | `python-dotenv` → frozen `Settings`; `settings` table for runtime overrides |
 | Errors | `HTTPException` with 401 / 403 / 404 / 422; `ApiError` on the client; 401 triggers global logout |
 | Observability | `/api/v1/meta/health`, `/meta/stats`, `/agents/meta/runtime`, `/agents/meta/bindings`, `/mcp/status`, `/mcp/calls/stats`, `/knowledge/stats` |
-| Testing | `backend/tests/smoke.py` — 272 end-to-end assertions; `pnpm typecheck`, `pnpm build`, `pnpm check:i18n`, `ruff check` |
+| Testing | `backend/tests/smoke.py` — 284 end-to-end assertions; `pnpm typecheck`, `pnpm build`, `pnpm check:i18n`, `ruff check` |
 
 ## 11. Technology decisions (summary)
 
@@ -286,7 +286,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | Security | HS256 JWT, PBKDF2, per-route RBAC, audit | RS256/rotating keys, rate limiting, secret manager |
 | AI accuracy | Deterministic mock + BM25 grounding | Real LLM, vector/embedding store, reranking |
 | Scalability | In-process indexes, synchronous execution | Task queue for workflow runs, external vector DB |
-| Testability | 272 smoke assertions, no network required | Contract tests, load tests, MCP conformance suite |
+| Testability | 284 smoke assertions, no network required | Contract tests, load tests, MCP conformance suite |
 | Operability | Health/stats/runtime endpoints | Structured logging, metrics, tracing |
 
 ## 13. Known limitations
@@ -305,7 +305,7 @@ The SPA catch-all is registered unconditionally and resolves `dist/index.html` p
 | Domestic forms (FFC-001) | 66-field catalog, statutory validation, AST formulas, versions, print/CSV | `services/form_catalog.py`, `services/form_rules.py`, `routers/forms.py`, `pages/Forms.tsx` |
 | Visual workflow orchestration | DAG validator + engine | `services/workflow_engine.py`, `pages/Workflows.tsx` |
 | Human approval runtime (ADR-0009) | Long-running instances, countersign, parallel/join, task actions, delegation | `services/flow_runtime.py`, `routers/workflows.py`, `pages/Workflows.tsx` |
-| REST API | Versioned routers | `routers/*.py` (192 route decorators → 149 OpenAPI paths) |
+| REST API | Versioned routers | `routers/*.py` (194 route decorators → 149 OpenAPI paths) |
 | MCP transport + tool registry | Dual-transport MCP + single registry | `mcp_server.py`, `routers/mcp.py`, `services/mcp_tools.py` |
 | MCP servers (independent) | CRUD, probe/sync, declared tools, remote invoke | `routers/mcp_servers.py`, `services/mcp_servers.py`, `mcp_servers` |
 | Skills (independent) | Lifecycle, catalog, editable files, `server_id` link | `routers/skills.py`, `services/skill_*.py`, `mcp_skills` |

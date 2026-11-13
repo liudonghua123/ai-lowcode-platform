@@ -108,7 +108,7 @@ erDiagram
 | Table | Key columns | Notes |
 | --- | --- | --- |
 | `agents` | `id`, `code` (unique), `name`, `description`, `mode` (`query`/`act`/`hybrid`), `model`, `system_prompt`, `temperature`, `kb_ids` **JSON**, `skill_ids` **JSON**, `server_ids` **JSON**, `workflow_ids` **JSON**, `status`, `created_by`, timestamps | Four independent binding arrays; `server_ids` restricts the ReAct tool set to declared MCP server tools |
-| `conversations` | `id`, `agent_id`, `title`, `messages` **JSON**, `user_id`, `created_at` | Last 6 turns replayed into the ReAct prompt |
+| `conversations` | `id`, `agent_id`, `title`, `messages` **JSON**, `user_id`, `created_at` | One chat session per row, grouped by `agent_id`; last 6 turns replayed into the ReAct prompt. An empty row (title `''`, `messages=[]`) represents an explicitly started session and is titled from the first message |
 
 ### 3.6 MCP servers, Skills, Hubs, AI models & system (8)
 
@@ -123,7 +123,7 @@ erDiagram
 | `settings` | `key` (PK), `value` **JSON**, `updated_at` | Runtime overrides (MFA policy, i18n/theme defaults, `registry.custom_types` for runtime-registered component/node specs) |
 | `skill_hubs` | `id`, `code` (unique), `name`, `description`, `kind` (`builtin`/`remote`), `url`, `enabled`, `sync_interval_min`, `auth_config` **JSON**, `last_sync_at`, `index_cache` **JSON**, timestamps | Skill registries; builtin hubs work offline, remote hubs cache their index and degrade to it on failure |
 
-## 4. Indexes (21)
+## 4. Indexes (22)
 
 | Index | Column | Purpose |
 | --- | --- | --- |
@@ -148,6 +148,7 @@ erDiagram
 | `idx_org_units_parent` | `org_units(parent_code)` | Leader-chain traversal |
 | `idx_submissions_serial` | `form_submissions(form_id, serial_no)` | Serial-number uniqueness / lookup |
 | `idx_skill_hubs_enabled` | `skill_hubs(enabled)` | Enabled-hub lookup for cross-hub search |
+| `idx_conversations_agent_user` | `conversations(agent_id, user_id)` | Grouped session list / per-agent clear |
 
 ## 5. Data access API
 
@@ -166,7 +167,7 @@ erDiagram
 
 ## 6. Seed data (`seed.py`)
 
-`seed_if_empty()` runs once on first boot and creates: 26 permissions, 5 roles, 6 users (`admin`, `alice`, `bob`, `carol`, `cas_demo`, `diana`), 5 SSO providers (CAS enabled in demo mode), sample forms and submissions, workflows and instances, knowledge collections/documents, agents, conversations, settings and audit logs. Admin is created with `mfa_required=0` and MFA defaults off, so the demo is immediately usable.
+`seed_if_empty()` runs once on first boot and creates: 28 permissions, 5 roles, 6 users (`admin`, `alice`, `bob`, `carol`, `cas_demo`, `diana`), 5 SSO providers (CAS enabled in demo mode), sample forms and submissions, workflows and instances, knowledge collections/documents, agents, conversations, settings and audit logs. Admin is created with `mfa_required=0` and MFA defaults off, so the demo is immediately usable.
 
 `ensure_security_upgrade()` is likewise idempotent and provisions the `data:audit` permission, the `auditor` role and demo user `diana` on existing databases. `ensure_registries()` is idempotent and runs on **every** startup (also from `seed_if_empty()`), provisioning three independent registries without touching user data: 3 MCP servers (`platform-builtin`, `thirdparty-http`, `thirdparty-stdio`), 5 catalog Skills (linked to those servers via `server_id`) and 6 default AI model providers (`llm`/`asr`/`tts`/`embedding`/`rerank`/`vision`). `ensure_domestic_examples()` additionally provisions the `expense_claim` form, the `expense_approval` workflow and 6 `org_units` with parent links and leaders. Together these are the in-place upgrade path for databases created before the MCP/Skills split and the domestic form/approval runtime.
 
@@ -175,6 +176,7 @@ erDiagram
 - Schema is created idempotently with `CREATE TABLE IF NOT EXISTS`; full table creation is handled by `init_db()`.
 - `init_db()` executes `SCHEMA` (tables), then calls `_migrate()`, then executes `INDEX_SCHEMA`. Indexes are created **after** the migration because some reference columns added by `ALTER TABLE` on existing databases.
 - `_migrate()` is driven by the `MIGRATIONS` dict; it reads `PRAGMA table_info(<table>)` and issues `ALTER TABLE ... ADD COLUMN` for any missing column. Current migrations: `mcp_skills` (lifecycle fields + `server_id` + `hub_id`), `kb_documents` (upload metadata), `agents` (`server_ids`), `mcp_call_logs` (`target`), `forms` (`print_template`, `settings`), `form_submissions` (`form_version`, `serial_no`, `flow_instance_id`, `computed`, `updated_at`), `workflows` (`form_code`) and `workflow_instances` (`graph`, `form_data`, `form_code`, `current_nodes`, `variables`, `workflow_version`).
+- v0.6.0 (AGS-001) adds `idx_conversations_agent_user` for grouped session lookup and introduces explicitly created empty conversations (titled from the first message).
 - v0.5.0 (REG-001) adds the `skill_hubs` table, `mcp_skills.hub_id`, `idx_skill_hubs_enabled`, `skill:read`/`skill:write` permissions (idempotently backfilled by `ensure_permission_upgrade()`), and stores runtime-registered component/node specs in `settings.registry.custom_types`.
 - v0.2.0 added the skill lifecycle / journal tables. v0.3.0 adds `mcp_servers` + `ai_providers`, splits MCP servers from Skills, and adds multi-format upload metadata. v0.4.0 (FFC-001) adds the five form/approval tables, their 7 indexes and the extended columns above. `ensure_registries()` / `ensure_domestic_examples()` backfill the new registries and demo data on existing databases.
 - `skill_files.bootstrap()` runs at startup to materialize default files for installed skills that have none; `mcp_journal.ensure_demo()` seeds illustrative journal rows when the table is empty.

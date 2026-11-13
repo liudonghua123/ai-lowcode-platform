@@ -153,9 +153,9 @@ The smoke suite starts this workflow, approves the leader task, verifies that th
 | --- | --- |
 | `python3 -m ruff check app tests` | All checks passed |
 | `python3 tests/smoke.py` | **189 passed / 0 failed** at the time (41 new domestic assertions); 205 after ADR-0011 |
-| `pnpm typecheck` / `pnpm check:i18n` / `pnpm build` | pass / 929 en ↔ 929 zh, 0 missing / pass |
+| `pnpm typecheck` / `pnpm check:i18n` / `pnpm build` | pass / 950 en ↔ 950 zh, 0 missing / pass |
 | Runtime metadata (at the time) | 134 OpenAPI paths, 174 route decorators, 29 tables, 20 indexes, 24 MCP tools |
-| Current registry (REG-001 / ADR-0012) | 149 OpenAPI paths, 192 route decorators, 30 tables, 21 indexes, 55 tools, 272 smoke assertions |
+| Current registry (REG-001 / ADR-0012) | 149 OpenAPI paths, 194 route decorators, 30 tables, 22 indexes, 55 tools, 284 smoke assertions |
 
 ## 7. Constraints and boundaries
 

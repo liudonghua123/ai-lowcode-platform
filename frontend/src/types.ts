@@ -175,6 +175,11 @@ export interface ChatResponse {
   model: string; provider: string; orchestration: string; conversation_id: number; agent: string
   action_request?: ActionRequest | null
 }
+export interface Conversation {
+  id: number; agent_id: number; title: string | null
+  messages: { role: 'user' | 'assistant'; content: string }[]
+  user_id?: string | null; created_at?: string
+}
 export interface McpSkill {
   id: number; code: string; name: string; type: string; endpoint?: string
   command?: string; enabled: boolean; auth_config: Record<string, unknown>

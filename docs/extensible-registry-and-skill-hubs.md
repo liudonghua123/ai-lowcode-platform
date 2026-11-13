@@ -1,6 +1,6 @@
 # Extensible Component / Node Registry, Full Agent Coverage & Skill Hubs
 
-> 中文摘要：本文档描述 v5 扩展的四条主线：**声明式注册中心**（66 种表单组件 / 24 种工作流节点，带 `config_schema`，支持运行时注册自定义类型）、**权限驱动的智能体全能力覆盖**（55 个工具、10 个能力域、按当前角色过滤）、**MCP 服务与技能彻底分离**（新增 `skill:read` / `skill:write`）、以及**技能可视化编辑与 Skill Hub 体系**（3 个 Hub、13 个可搜索技能、跨 Hub 搜索 / 一键安装 / 远程索引降级）。所有数字均取自代码与 `/openapi.json`，并由 `backend/tests/smoke.py` 的 272 项断言验证。
+> 中文摘要：本文档描述 v5 扩展的四条主线：**声明式注册中心**（66 种表单组件 / 24 种工作流节点，带 `config_schema`，支持运行时注册自定义类型）、**权限驱动的智能体全能力覆盖**（55 个工具、10 个能力域、按当前角色过滤）、**MCP 服务与技能彻底分离**（新增 `skill:read` / `skill:write`）、以及**技能可视化编辑与 Skill Hub 体系**（3 个 Hub、13 个可搜索技能、跨 Hub 搜索 / 一键安装 / 远程索引降级）。所有数字均取自代码与 `/openapi.json`，并由 `backend/tests/smoke.py` 的 284 项断言验证。
 
 | Field | Value |
 | --- | --- |
@@ -173,7 +173,7 @@ The `/hubs` page has **Discover** (search, category filter, one-click Add skill)
 
 ## 9. Verification
 
-`backend/tests/smoke.py` contains **68 v5 assertions** (272 total, 0 failed):
+`backend/tests/smoke.py` contains **68 v5 assertions** (284 total, 0 failed):
 
 - registry: 66 components / 24 nodes, `config_schema` on every spec, 6 node categories, human nodes, zh labels, bootstrap/health counters;
 - custom types: register component → catalog → form validation → delete; register node → palette; invalid code rejected;
@@ -182,7 +182,7 @@ The `/hubs` page has **Discover** (search, category filter, one-click Add skill)
 - separation: `skill:read` / `skill:write` in bootstrap, independent registries, `hub` metadata on skills;
 - hubs: 3 hubs, cross-hub search, category filter, remote-hub degradation, Hub CRUD/sync, install, visual preview, manifest edit, batch file save, duplicate rejection and cleanup.
 
-`ruff check app tests`, `pnpm typecheck`, `pnpm build`, i18n parity (929 en / 929 zh, 0 missing) and a 375px Playwright sweep over 14 routes (0px horizontal overflow on all) all pass. Screenshots: `skill-hubs.png`, `skill-editor.png`, `skill-preview.png`, `agent-capabilities.png`, `workflow-nodes.png`, `form-components.png`, `mobile-skill-hubs.png`, `mobile-agent-capabilities.png`.
+`ruff check app tests`, `pnpm typecheck`, `pnpm build`, i18n parity (950 en / 950 zh, 0 missing) and a 375px Playwright sweep over 14 routes (0px horizontal overflow on all) all pass. Screenshots: `skill-hubs.png`, `skill-editor.png`, `skill-preview.png`, `agent-capabilities.png`, `workflow-nodes.png`, `form-components.png`, `mobile-skill-hubs.png`, `mobile-agent-capabilities.png`. `agent-studio.png`, `agent-binding-dialog.png`, `agent-capabilities-dialog.png`, `agent-settings-dialog.png`, `mobile-agent-studio.png` (v6, see [AGS-001](agent-studio-and-conversations.md)).
 
 ## 10. Known limitations
 
